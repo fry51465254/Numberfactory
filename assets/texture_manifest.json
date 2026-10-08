@@ -1,0 +1,87 @@
+{
+  "style": "Abstract mathematics laboratory, orthographic overhead, white and graphite with teal/coral/yellow accents",
+  "assets": [
+    {
+      "name": "floor",
+      "path": "res://assets/textures/floor.png",
+      "tool": "built-in image_gen",
+      "transparent": false,
+      "display_pixels": 40,
+      "prompt": "Use case: stylized-concept. Asset type: seamless repeating 2D game FLOOR MATERIAL only. Entire square canvas opaque pale neutral light gray (#edf0ef), low contrast fine matte ceramic material texture. Extremely subtle uniform grain. Absolutely no machinery, no circles, no channels, no panels, no frames, no lines, no seams, no gradients, no lighting direction, no objects or geometric patterns, no symbols or text. All edges must match opposite edges for seamless tiling. Nearly flat texture intended as quiet background under tiny machines."
+    },
+    {
+      "name": "belt",
+      "path": "res://assets/textures/belt.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 40,
+      "prompt": "Use case: stylized-concept. Asset type: production-ready single sprite for 2D top-down abstract mathematical laboratory factory. Image 1 is STYLE REFERENCE ONLY; create a different asset. Match white ceramic and graphite outlines, clean polished illustrated broad geometric shapes, neutral lighting, restrained teal/coral/yellow accents. ONE square straight conveyor tile. A horizontal west-to-east channel of graphite slats with flat white rails at north and south, flush ends reaching left/right tile borders. Strict flat overhead, no perspective. No arrows. Genuine transparent background. Entire asset centered and filling canvas, crisp readable at 40 or 80 pixels, no numbers, text, branding or watermark; no cast shadows, no perspective, no fine noisy details. Do not copy reference machine geometry."
+    },
+    {
+      "name": "belt_turn",
+      "path": "res://assets/textures/belt_turn-v2.png",
+      "previous_asset": "res://assets/textures/belt_turn.png",
+      "render_alignment": {
+        "method": "3x3 UV-anchored mesh in board_view.gd",
+        "source_pixels": 1254,
+        "source_x": [0, 618, 754, 1254],
+        "source_y": [0, 522, 649, 1254],
+        "destination_tile_fraction": [0, 0.42, 0.58, 1],
+        "ports": "north midpoint to east midpoint; mirrored and rotated in engine"
+      },
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 40,
+      "prompt": "Use case: precise game sprite edit. Edit ONLY the geometry/placement of image 1; preserve its compact top-right elbow, real transparency, materials, lighting and simple style. Image 2 is the straight conveyor reference for the DARK TRACK WIDTH. Correct image 1 so the vertical dark track CENTER is x=50% rather than about 55%, and the horizontal dark track CENTER is y=50% rather than about 45%. Increase the dark slatted track width to exactly the same fraction of the square canvas as image 2 (about 16%); image 1 currently has a narrower track. The open TOP connector has graphite track between x=42% and x=58% and its center exactly x=50%; the open RIGHT connector has graphite track between y=42% and y=58% and its center exactly y=50%. Both open endpoints meet their canvas edges, no padding or endcaps. Nothing else changes. Square image, orthographic top-down, thin white ceramic and graphite housing with teal trim, no text, no numbers, no arrows, no floor, no cast shadows. Bottom below y=75% and left below x=25% remain entirely transparent. These corrected centered ports and identical track widths are essential for a 40x40 pixel game tile."
+    },
+    {
+      "name": "source",
+      "path": "res://assets/textures/source.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 80,
+      "prompt": "Use case: stylized-concept. Asset type: production-ready single sprite for 2D top-down abstract mathematical laboratory factory. Image 1 is STYLE REFERENCE ONLY; create a different asset. Match white ceramic and graphite outlines, clean polished illustrated broad geometric shapes, neutral lighting, restrained teal/coral/yellow accents. ONE square large prime-source instrument, circular teal crystal reservoir nested in white octagonal base, two ports on east edge. Leave a clean broad central disc for a numeric label added in engine. Strict flat overhead. Genuine transparent background. Entire asset centered and filling canvas, crisp readable at 40 or 80 pixels, no numbers, text, branding or watermark; no cast shadows, no perspective, no fine noisy details. Do not copy reference machine geometry."
+    },
+    {
+      "name": "multiplier",
+      "path": "res://assets/textures/multiplier.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 40,
+      "prompt": "Use case: stylized-concept. Asset type: single game sprite for a top-down 2D mathematical factory. Draw ONE multiplication machine: an orthographic STRICT overhead square compact abstract mathematics laboratory instrument, white ceramic housing with graphite frame, a restrained teal inset double-chamber mechanism connecting to a single chamber, geometric circles and channels. Inputs located west and north; output east. Entire object centered filling 90% of square canvas, crisp silhouette and broad shapes readable at 40 pixels. Flat diffuse ambient lighting, no perspective, no cast shadow, no lettering, no numerals, no arrows, no symbols, no border around image, no ground. Genuine transparent background. Polished illustrated game art, no photorealism, no fine noisy details."
+    },
+    {
+      "name": "splitter",
+      "path": "res://assets/textures/splitter-fourway.png",
+      "previous_asset": "res://assets/textures/splitter.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 40,
+      "prompt": "Use case: precise game sprite edit. Edit the reference factory splitter instrument to be FOUR-WAY SYMMETRIC instead of three-way. Match its white ceramic housing, graphite outlines, restrained teal channels and yellow center. Strict orthographic overhead top view, NO perspective or cylindrical pipe mouths. Compact square lab instrument with four identical FLAT open conveyor sockets exactly at the north/south/east/west edge midpoints, joined by a symmetric plus-shaped graphite channel around a small yellow circular central mechanism. All four sockets look identical; no baked input/output direction. Centered and filling 90% of square, complete silhouette, thick simple contours readable at 40x40 pixels. Real transparent background. No arrows, symbols, text, numbers, shadows, floor, frame or watermark. Keep same palette and materials. ONE sprite."
+    },
+    {
+      "name": "research",
+      "path": "res://assets/textures/research.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 80,
+      "prompt": "Use case: stylized-concept. Asset type: production-ready single sprite for 2D top-down abstract mathematical laboratory factory. Image 1 is STYLE REFERENCE ONLY; create a different asset. Match white ceramic and graphite outlines, clean polished illustrated broad geometric shapes, neutral lighting, restrained teal/coral/yellow accents. ONE square large mathematical research instrument, distinctive concentric teal circular rings nested in a white square base, small graphite corner supports, large empty center. Strict flat overhead. Genuine transparent background. Entire asset centered and filling canvas, crisp readable at 40 or 80 pixels, no numbers, text, branding or watermark; no cast shadows, no perspective, no fine noisy details. Do not copy reference machine geometry."
+    },
+    {
+      "name": "exploration",
+      "path": "res://assets/textures/exploration.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 80,
+      "prompt": "Use case: stylized-concept. Asset type: production-ready single sprite for 2D top-down abstract mathematical laboratory factory. Image 1 is STYLE REFERENCE ONLY; create a different asset. Match white ceramic and graphite outlines, clean polished illustrated broad geometric shapes, neutral lighting, restrained teal/coral/yellow accents. ONE square large exploration instrument, distinctive coral red diamond-shaped nested geometric layers within white square base, graphite details and large clear central disc. Strict flat overhead. Genuine transparent background. Entire asset centered and filling canvas, crisp readable at 40 or 80 pixels, no numbers, text, branding or watermark; no cast shadows, no perspective, no fine noisy details. Do not copy reference machine geometry."
+    },
+    {
+      "name": "hub",
+      "path": "res://assets/textures/hub.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 80,
+      "prompt": "Use case: stylized-concept. Asset type: production-ready single sprite for 2D top-down abstract mathematical laboratory factory. Image 1 is STYLE REFERENCE ONLY; create a different asset. Match white ceramic and graphite outlines, clean polished illustrated broad geometric shapes, neutral lighting, restrained teal/coral/yellow accents. ONE square large central mathematics instrument, distinctive yellow hexagonal concentric geometry in white square base, graphite accents and spacious center. Strict flat overhead. Genuine transparent background. Entire asset centered and filling canvas, crisp readable at 40 or 80 pixels, no numbers, text, branding or watermark; no cast shadows, no perspective, no fine noisy details. Do not copy reference machine geometry."
+    }
+  ]
+}
