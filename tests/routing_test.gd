@@ -258,7 +258,7 @@ func release():
 
 func _test_builder():
 	for reversed in [false, true]:
-		scene.sim = FactorySim.new(false)
+		scene.sim = LegacyBoardFixture.new()
 		scene.board.sim = scene.sim
 		scene._set_tool("belt")
 		for x in range(4, 10): scene.sim.build_belt(Vector2i(x, 10), 0)
@@ -278,7 +278,7 @@ func _test_builder():
 		advance(scene.sim, 90)
 		verify(scene.sim.at(Vector2i(9, 10)).item == 6 and (scene.sim.at(Vector2i(6, 14)).inputs[0] == 10 if reversed else scene.sim.at(Vector2i(6, 13)).item == 10), "Player-built crossing transports both real streams")
 		verify(scene.sim.total_mass() == scene.sim.emitted, "Player-built crossing preserves all material")
-	scene.sim = FactorySim.new(false)
+	scene.sim = LegacyBoardFixture.new()
 	scene.board.sim = scene.sim
 	scene.sim.place(Vector2i(8, 10), "splitter", 0)
 	for direction in range(4):
@@ -294,7 +294,7 @@ func _test_builder():
 	scene.mode_input.item_selected.emit(2)
 	scene._refresh()
 	verify(not scene.filter_ports[3].selector.disabled and scene.filter_ports[3].label.text.contains("输出"), "Inspector detects north output and enables its filter")
-	scene.sim = FactorySim.new(false)
+	scene.sim = LegacyBoardFixture.new()
 	scene.board.sim = scene.sim
 	scene.sim.build_belt(Vector2i(8, 10), 0)
 	inject(scene.sim, Vector2i(8, 10), 12)
@@ -336,7 +336,7 @@ func run():
 	quit(0 if failures.is_empty() else 1)
 
 func _visual():
-	scene.sim = FactorySim.new(false)
+	scene.sim = LegacyBoardFixture.new()
 	scene.sim.delivered.research = 60
 	scene.sim.delivered.exploration = 30
 	scene.board.sim = scene.sim

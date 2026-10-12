@@ -18,6 +18,7 @@ var elapsed = 0.0
 var turn = 0
 var emitted = 0
 var discarded = 0
+var _vacate_cache: Dictionary = {}
 
 func _init(fresh: bool = true):
 	if fresh:
@@ -49,7 +50,9 @@ func _base(kind: String, p: Vector2i, direction: int) -> Dictionary:
 	return {"kind": kind, "pos": p, "dir": direction, "item": 0,
 		"age": 0.0, "inputs": [0, 0], "last_inputs": [0, 0], "output": 0,
 		"progress": 0.0, "mode": 0, "ratio": 1, "cursor": 0,
-		"filters": [0, 0, 0, 0], "layer": 0, "entry": -1, "value": 0, "charges": [0.0, 0.0]}
+		"filters": [0, 0, 0, 0], "layer": 0, "entry": -1, "value": 0, "charges": [0.0, 0.0],
+		"outputs": [0, 0, 0, 0, 0, 0, 0, 0], "port_age": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+		"budget": 0.0, "log_recent": []}
 
 func _add_fixed(kind: String, p: Vector2i, value: int = 0):
 	var e = _base(kind, p, 0)
@@ -67,6 +70,49 @@ func complete() -> bool:
 
 func accessible(p: Vector2i) -> bool:
 	return p.x >= 0 and p.y >= 0 and p.x < WIDTH and p.y < HEIGHT and (p.x < 20 or unlocked())
+
+func source_ports(e: Dictionary) -> int:
+	return 1 if e.value == 5 else 2
+
+func source_rate(e: Dictionary) -> float:
+	return 3.0 if e.value == 2 else 2.0
+
+func source_enabled(_e: Dictionary) -> bool:
+	return true
+
+func accepts_target(e: Dictionary, value: int) -> bool:
+	return value == TARGETS[e.kind]
+
+func receive_target(e: Dictionary, value: int):
+	delivered[e.kind] += 1
+	recent[e.kind].append(elapsed)
+
+func splitter_unlocked(mode: int) -> bool:
+	return mode == 0 or delivered.research >= (20 if mode == 1 else 60)
+
+func simulation_entities() -> Dictionary:
+	return entities
+
+func restore_bounds(p: Vector2i, size: int) -> bool:
+	return p.x >= 0 and p.y >= 0 and p.x + size <= WIDTH and p.y + size <= HEIGHT
+
+func valid_source(value: int) -> bool:
+	return value in [2, 3, 5]
+
+func propose_extra(_snapshot: Dictionary, _reserved: Dictionary, _moves: Array):
+	pass
+
+func propose_after(_snapshot: Dictionary, _reserved: Dictionary, _moves: Array):
+	pass
+
+func extra_can_receive(_e: Dictionary, _from: Vector2i) -> bool:
+	return false
+
+func extra_departure(_move: Dictionary) -> bool:
+	return false
+
+func extra_arrival(_move: Dictionary) -> bool:
+	return false
 
 func at(p: Vector2i, layer: int = 0) -> Dictionary:
 	if layer == 1:
@@ -169,7 +215,7 @@ func splitter_ports(e: Dictionary, snapshot: Dictionary = {}) -> Dictionary:
 		elif neighbor.kind in TARGETS:
 			ports.outputs.append(direction)
 		elif neighbor.kind == "source":
-			for port in range(1 if neighbor.value == 5 else 2):
+			for port in range(source_ports(neighbor)):
 				if neighbor.pos + Vector2i(2, port) == e.pos:
 					ports.inputs.append(direction)
 	return ports
@@ -177,19 +223,19 @@ func splitter_ports(e: Dictionary, snapshot: Dictionary = {}) -> Dictionary:
 func _splitter_schedule(e: Dictionary, snapshot: Dictionary) -> Array:
 	var connected = splitter_ports(e, snapshot).outputs
 	var matching: Array = []
-	if e.mode == 2 and delivered.research >= 60:
+	if e.mode == 2 and splitter_unlocked(2):
 		for direction in connected:
 			if e.filters[direction] == e.item: matching.append(direction)
 	var schedule: Array = []
 	for offset in range(4):
 		var direction = (e.dir + offset) % 4
 		if direction not in connected: continue
-		if e.mode == 2 and delivered.research >= 60:
+		if e.mode == 2 and splitter_unlocked(2):
 			if not matching.is_empty():
 				if direction not in matching: continue
 			elif e.filters[direction] > 0:
 				continue
-		var weight = e.ratio if e.mode == 1 and delivered.research >= 20 and direction == e.dir else 1
+		var weight = e.ratio if e.mode == 1 and splitter_unlocked(1) and direction == e.dir else 1
 		for i in range(weight): schedule.append(direction)
 	return schedule
 
@@ -212,12 +258,14 @@ func _next_splitter_cursor(e: Dictionary, snapshot: Dictionary, direction: int) 
 func tick(dt: float = STEP):
 	elapsed += dt
 	turn += 1
-	for e in entities.values():
+	var active = simulation_entities()
+	for e in active.values():
 		if not accessible(e.pos):
 			continue
 		if e.kind == "source":
-			var per_port = 3.0 if e.value == 2 else 2.0
-			for port in range(1 if e.value == 5 else 2):
+			if not source_enabled(e): continue
+			var per_port = source_rate(e)
+			for port in range(source_ports(e)):
 				e.charges[port] = minf(1.0, e.charges[port] + dt * per_port)
 		elif e.kind == "multiplier":
 			if e.output != 0:
@@ -238,9 +286,11 @@ func tick(dt: float = STEP):
 			e.age += dt
 
 	# All acceptance decisions use one snapshot. Newly received items cannot move again.
-	var snapshot = entities.duplicate(true)
+	var snapshot = active.duplicate(true)
+	_vacate_cache.clear()
 	var reserved: Dictionary = {}
 	var moves: Array = []
+	propose_extra(snapshot, reserved, moves)
 	var keys = snapshot.keys()
 	keys.sort()
 	var tie_order: Dictionary = {}
@@ -256,7 +306,8 @@ func tick(dt: float = STEP):
 		if not accessible(e.pos):
 			continue
 		if e.kind == "source":
-			for port in range(1 if e.value == 5 else 2):
+			if not source_enabled(e): continue
+			for port in range(source_ports(e)):
 				if e.charges[port] >= 0.999999:
 					var from = e.pos + Vector2i(1, port)
 					_offer(snapshot, reserved, moves, id, from, from + Vector2i.RIGHT, e.value, port)
@@ -269,6 +320,7 @@ func tick(dt: float = STEP):
 				if _offer(snapshot, reserved, moves, id, e.pos, e.pos + DIRS[direction], value, -1):
 					if e.kind == "splitter": moves[-1].next_cursor = _next_splitter_cursor(e, snapshot, direction)
 					break
+	propose_after(snapshot, reserved, moves)
 	# Remove proposals whose occupied destination cannot leave this same step.
 	var changed = true
 	while changed:
@@ -284,6 +336,7 @@ func tick(dt: float = STEP):
 				changed = true
 	# Clear every departure before filling any destination, including occupied belt chains.
 	for m in moves:
+		if extra_departure(m): continue
 		var producer = entities[m.source]
 		if producer.kind == "source":
 			producer.charges[m.port] = 0.0
@@ -297,10 +350,10 @@ func tick(dt: float = STEP):
 			if producer.kind == "splitter":
 				producer.cursor = m.next_cursor
 	for m in moves:
+		if extra_arrival(m): continue
 		var receiver = entities[m.destination]
 		if receiver.kind in TARGETS:
-			delivered[receiver.kind] += 1
-			recent[receiver.kind].append(elapsed)
+			receive_target(receiver, m.value)
 		elif receiver.kind == "multiplier":
 			receiver.inputs[m.input] = m.value
 		else:
@@ -322,7 +375,7 @@ func _offer(snapshot: Dictionary, reserved: Dictionary, moves: Array, source: St
 	var input = -1
 	var entry = DIRS.find(from - destination)
 	if e.kind in TARGETS:
-		if value != TARGETS[e.kind]:
+		if not accepts_target(e, value):
 			return false
 	elif e.kind == "multiplier":
 		if from == e.pos - DIRS[e.dir]:
@@ -351,6 +404,12 @@ func _offer(snapshot: Dictionary, reserved: Dictionary, moves: Array, source: St
 	return true
 
 func _can_vacate(snapshot: Dictionary, id: String, visited: Dictionary) -> bool:
+	if _vacate_cache.has(id): return _vacate_cache[id]
+	var result = _vacate_search(snapshot, id, visited)
+	_vacate_cache[id] = result
+	return result
+
+func _vacate_search(snapshot: Dictionary, id: String, visited: Dictionary) -> bool:
 	if visited.has(id):
 		return true
 	var e = snapshot[id]
@@ -364,7 +423,8 @@ func _can_vacate(snapshot: Dictionary, id: String, visited: Dictionary) -> bool:
 		var target = _target_id(snapshot, e.pos, p)
 		if not snapshot.has(target): continue
 		var next = snapshot[target]
-		if next.kind in TARGETS and TARGETS[next.kind] == e.item:
+		if extra_can_receive(next, e.pos): return true
+		if next.kind in TARGETS and accepts_target(next, e.item):
 			return true
 		if next.kind == "multiplier":
 			if e.pos == next.pos - DIRS[next.dir] and next.inputs[0] == 0:
@@ -399,6 +459,12 @@ static func prime_count(value: int) -> int:
 static func mass_of(e: Dictionary) -> int:
 	return prime_count(e.item) + prime_count(e.output) + prime_count(e.inputs[0]) + prime_count(e.inputs[1])
 
+static func valid_number(value) -> bool:
+	return typeof(value) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(value))
+
+static func valid_integer(value) -> bool:
+	return valid_number(value) and float(value) == float(int(value))
+
 func total_mass() -> int:
 	var mass = discarded
 	for e in entities.values():
@@ -419,6 +485,7 @@ func serialize() -> Dictionary:
 func restore(data: Dictionary) -> bool:
 	if (data.get("version", 0) != 1 and data.get("version", 0) != 2) or not data.get("entities") is Array or not data.get("delivered") is Dictionary:
 		return false
+	if not valid_number(data.get("elapsed", 0)) or float(data.get("elapsed", 0)) < 0: return false
 	var new_entities: Dictionary = {}
 	var new_occupancy: Dictionary = {}
 	for raw in data.entities:
@@ -426,23 +493,39 @@ func restore(data: Dictionary) -> bool:
 			return false
 		var p = Vector2i(int(raw.pos[0]), int(raw.pos[1]))
 		var kind = str(raw.get("kind", ""))
-		if kind not in ["source", "research", "exploration", "hub", "belt", "multiplier", "splitter"]:
+		if kind not in ["source", "research", "exploration", "hub", "belt", "multiplier", "splitter", "logistics"]:
 			return false
-		var size = 2 if kind in ["source", "research", "exploration", "hub"] else 1
-		if p.x < 0 or p.y < 0 or p.x + size > WIDTH or p.y + size > HEIGHT:
+		var size = 2 if kind in ["source", "research", "exploration", "hub", "logistics"] else 1
+		if not restore_bounds(p, size):
 			return false
 		var e = _base(kind, p, posmod(int(raw.get("dir", 0)), 4))
 		for field in e:
 			if field not in ["kind", "pos", "dir"] and raw.has(field):
 				e[field] = raw[field]
 		for field in ["item", "output", "mode", "ratio", "cursor", "layer", "entry", "value"]:
+			if not valid_integer(e[field]): return false
 			e[field] = int(e[field])
 		if not e.inputs is Array or e.inputs.size() != 2 or not e.charges is Array or e.charges.size() != 2 or not e.last_inputs is Array or e.last_inputs.size() != 2:
 			return false
+		for values in [e.inputs, e.last_inputs]:
+			for value in values:
+				if not valid_integer(value): return false
 		e.inputs = [int(e.inputs[0]), int(e.inputs[1])]
 		e.last_inputs = [int(e.last_inputs[0]), int(e.last_inputs[1])]
+		if not e.outputs is Array or e.outputs.size() != 8 or not e.port_age is Array or e.port_age.size() != 8 or not e.log_recent is Array: return false
+		for i in range(8):
+			if not valid_integer(e.outputs[i]) or not valid_number(e.port_age[i]): return false
+			e.outputs[i] = int(e.outputs[i])
+			e.port_age[i] = clampf(float(e.port_age[i]), 0.0, TRAVEL)
+			if e.outputs[i] < 0 or e.outputs[i] == 1 or e.outputs[i] > MAX_VALUE: return false
+		for field in ["budget", "age", "progress"]:
+			if not valid_number(e[field]) or float(e[field]) < 0: return false
+		for time in e.log_recent:
+			if not valid_number(time) or float(time) < 0 or float(time) > float(data.get("elapsed", 0)): return false
+		e.budget = clampf(float(e.budget), 0.0, 1.0)
 		if not e.filters is Array or e.filters.size() != 4: return false
 		for i in range(4):
+			if not valid_integer(e.filters[i]): return false
 			e.filters[i] = int(e.filters[i])
 			if e.filters[i] < -1 or e.filters[i] == 1 or e.filters[i] > MAX_VALUE: return false
 		if kind == "splitter" and not raw.has("filters") and e.mode == 2:
@@ -455,10 +538,12 @@ func restore(data: Dictionary) -> bool:
 				return false
 		if e.last_inputs[0] * e.last_inputs[1] > MAX_VALUE:
 			return false
-		if kind == "source" and e.value not in [2, 3, 5]:
+		if kind == "source" and not valid_source(e.value):
 			return false
 		e.ratio = clampi(e.ratio, 1, 9)
 		e.mode = clampi(e.mode, 0, 2)
+		for charge in e.charges:
+			if not valid_number(charge): return false
 		e.charges = [clampf(float(e.charges[0]), 0, 1), clampf(float(e.charges[1]), 0, 1)]
 		if e.layer not in [0, 1] or (e.layer == 1 and kind != "belt"): return false
 		var id = key(p) + (":under" if e.layer == 1 else "")

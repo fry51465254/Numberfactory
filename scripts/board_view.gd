@@ -11,8 +11,8 @@ const TEXTURE_FILES = {"belt_turn": "belt_turn-v2", "splitter": "splitter-fourwa
 var sim: FactorySim
 var textures: Dictionary = {}
 var turn_mesh: ArrayMesh
-var selected = Vector2i(-1, -1)
-var hover = Vector2i(-1, -1)
+var selected = Vector2i(-1000000000, -1000000000)
+var hover = Vector2i(-1000000000, -1000000000)
 var tool = "select"
 var direction = 0
 var font: Font
@@ -20,8 +20,7 @@ var pulse = 0.0
 
 func _ready():
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	font = SystemFont.new()
-	font.font_names = PackedStringArray(["Microsoft YaHei", "Noto Sans CJK SC", "sans-serif"])
+	font = load("res://assets/fonts/interface.tres")
 	for name in ["floor", "belt", "belt_turn", "source", "multiplier", "splitter", "research", "exploration", "hub"]:
 		var path = "res://assets/textures/%s.png" % TEXTURE_FILES.get(name, name)
 		if ResourceLoader.exists(path):
@@ -55,6 +54,9 @@ func _process(delta):
 
 func _draw():
 	if sim == null:
+		return
+	if sim is WorldSim:
+		_draw_world()
 		return
 	draw_rect(Rect2(0, 0, FactorySim.WIDTH * TILE, FactorySim.HEIGHT * TILE), Color("edf0ef"))
 	for y in range(FactorySim.HEIGHT):
@@ -96,12 +98,61 @@ func _draw():
 		if tool != "erase":
 			_arrow(r.get_center(), direction, color)
 
+func _draw_world():
+	var inverse = get_global_transform_with_canvas().affine_inverse()
+	var first = inverse * Vector2.ZERO
+	var last = inverse * get_viewport_rect().size
+	var area = Rect2i(Vector2i(floori(first.x / TILE) - 2, floori(first.y / TILE) - 2),
+		Vector2i(ceili((last.x - first.x) / TILE) + 5, ceili((last.y - first.y) / TILE) + 5))
+	var open = sim.world.bounds()
+	var visible = area.intersection(open)
+	if visible.has_area(): sim.ensure_area(visible)
+	draw_rect(Rect2(Vector2(area.position) * TILE, Vector2(area.size) * TILE), Color("d7dfdd"))
+	var stride = maxi(1, ceili(float(area.size.x) / 90.0))
+	for y in range(visible.position.y, visible.end.y, stride):
+		for x in range(visible.position.x, visible.end.x, stride):
+			var r = Rect2(Vector2(x, y) * TILE, Vector2.ONE * TILE * stride)
+			if textures.has("floor"): draw_texture_rect(textures.floor, r, false, Color(1, 1, 1, 0.32))
+	for x in range(area.position.x, area.end.x + 1, stride):
+		draw_line(Vector2(x * TILE, area.position.y * TILE), Vector2(x * TILE, area.end.y * TILE), Color(0.35, 0.43, 0.42, 0.14), 1, true)
+	for y in range(area.position.y, area.end.y + 1, stride):
+		draw_line(Vector2(area.position.x * TILE, y * TILE), Vector2(area.end.x * TILE, y * TILE), Color(0.35, 0.43, 0.42, 0.14), 1, true)
+	var next = open.grow(8)
+	for y in range(WorldGenerator.chunk_of(area.position).y, WorldGenerator.chunk_of(area.end).y + 1):
+		for x in range(WorldGenerator.chunk_of(area.position).x, WorldGenerator.chunk_of(area.end).x + 1):
+			for deposit in sim.generator.deposits(Vector2i(x, y)):
+				if not open.has_point(deposit.pos) and next.has_point(deposit.pos):
+					var center = (Vector2(deposit.pos) + Vector2.ONE) * TILE
+					draw_circle(center, 20, Color("edf0ef"))
+					_center_text(center, str(deposit.value), 20, Color("84958d"))
+	for e in sim.entities.values():
+		if area.grow(2).has_point(e.pos) and e.layer == 1: _draw_underground(e)
+	for e in sim.entities.values():
+		if area.grow(2).has_point(e.pos) and e.layer == 0: _draw_entity(e)
+	for e in sim.entities.values():
+		if area.grow(2).has_point(e.pos) and e.layer == 1: _draw_tunnel_ports(e)
+	draw_rect(Rect2(Vector2(open.position) * TILE, Vector2(open.size) * TILE), Color("159486"), false, 2)
+	var e = sim.at(selected)
+	if not e.is_empty():
+		var size = 2 if e.kind in ["source", "research", "logistics"] else 1
+		draw_rect(Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size).grow(2), Color("13998e"), false, 2.5)
+	if area.has_point(hover) and tool != "select":
+		var size = 2 if tool == "logistics" else 1
+		var valid = sim.can_place_logistics(hover) if tool == "logistics" else sim.can_place(hover)
+		if tool == "erase": valid = not sim.at(hover).is_empty() and sim.at(hover).kind in ["belt", "multiplier", "splitter", "logistics"]
+		elif tool == "belt": valid = valid or (sim.accessible(hover) and not sim.at(hover).is_empty())
+		var color = Color("1aaf9f") if valid else Color("e76863")
+		var r = Rect2(Vector2(hover) * TILE, Vector2.ONE * TILE * size)
+		draw_rect(r, Color(color, 0.16))
+		draw_rect(r, color, false, 2)
+		if tool != "erase": _arrow(r.get_center(), direction, color)
+
 func _draw_entity(e: Dictionary):
-	var big = e.kind in ["source", "research", "exploration", "hub"]
+	var big = e.kind in ["source", "research", "exploration", "hub", "logistics"]
 	var size = 2 if big else 1
 	var r = Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size)
 	var center = r.get_center()
-	var name = e.kind
+	var name = "hub" if e.kind == "logistics" else e.kind
 	var angle = 0.0 if e.kind == "splitter" else float(e.dir) * PI / 2.0
 	if e.kind == "belt" and e.entry >= 0 and e.entry != (e.dir + 2) % 4:
 		name = "belt_turn"
@@ -120,11 +171,24 @@ func _draw_entity(e: Dictionary):
 		draw_rect(r.grow(-3), Color("d3dad8") if e.kind == "belt" else Color("f9faf9"))
 		draw_rect(r.grow(-3), Color("82938e"), false, 2)
 	if e.kind == "source":
-		var color = COLORS[e.value]
+		var color = COLORS.get(e.value, Color("d5ad35"))
 		draw_circle(center, 19, Color("f5faf8"))
 		_center_text(center, str(e.value), 28, color)
-		for i in range(1 if e.value == 5 else 2):
+		for i in range(sim.source_ports(e)):
 			_arrow(Vector2(e.pos + Vector2i(2, i)) * TILE + Vector2(-5, TILE / 2), 0, color)
+		if not sim.source_enabled(e):
+			draw_rect(r, Color(0.4, 0.45, 0.43, 0.55))
+			_center_text(center, "未研究", 14, Color.WHITE)
+	elif e.kind == "research" and sim is WorldSim:
+		draw_circle(center, 20, Color("f9fbfa"))
+		_center_text(center, "研", 24, Color("159486"))
+	elif e.kind == "logistics" and sim is WorldSim:
+		draw_circle(center, 19, Color("f9fbfa"))
+		_center_text(center, "仓", 24, Color("b79725"))
+		for port in sim.logistics_ports(e):
+			var position = Vector2(port.from) * TILE + Vector2.ONE * TILE / 2 + Vector2(FactorySim.DIRS[port.facing]) * 17
+			if port.mode == "none": draw_circle(position, 2, Color("82938e"))
+			else: _arrow(position, (port.facing + 2) % 4 if port.mode == "input" else port.facing, Color("159486") if port.mode == "input" else Color("b79725"), 0.65)
 	elif e.kind in FactorySim.TARGETS:
 		var color = Color("16a59a") if e.kind == "research" else Color("e76863") if e.kind == "exploration" else Color("d5ad35")
 		draw_circle(center, 20, Color("f9fbfa"))
@@ -161,16 +225,26 @@ func _draw_entity(e: Dictionary):
 		_arrow(center, e.dir, Color(0.14, 0.24, 0.21, 0.6), 0.7)
 	var value = e.output if e.kind == "multiplier" else e.item
 	if value != 0:
+		var token = token_layout(value)
 		var pos = center
 		# Animate within the source cell only, leaving the next cell's occupancy authoritative.
 		if e.kind == "belt":
-			var start = Vector2(FactorySim.DIRS[e.entry]) * 13 if e.entry >= 0 else -Vector2(FactorySim.DIRS[e.dir]) * 13
-			pos += start.lerp(Vector2.ZERO, minf(1.0, e.age / FactorySim.TRAVEL))
-		var label = short_number(value)
-		var width = maxf(23, font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 8)
-		var box = Rect2(pos - Vector2(width / 2, 10), Vector2(width, 20))
+			pos += token_offset(token.size, e.entry if e.entry >= 0 else (e.dir + 2) % 4, e.age)
+		var box = Rect2(pos - token.size / 2, token.size)
 		draw_style_box(_token_style(value), box)
-		_center_text(pos, label, 13, Color("20352f"))
+		_center_text(pos, token.label, token.font_size, Color("20352f"))
+
+func token_layout(value: int) -> Dictionary:
+	var label = short_number(value)
+	var font_size = 13
+	while font_size > 9 and font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > TILE - 14:
+		font_size -= 1
+	var width = maxf(23, font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 8)
+	return {"label": label, "font_size": font_size, "size": Vector2(width, 20)}
+
+static func token_offset(size: Vector2, entry: int, age: float) -> Vector2:
+	var travel = Vector2.ONE * TILE / 2 - size / 2 - Vector2.ONE * 2
+	return (Vector2(FactorySim.DIRS[entry]) * travel).lerp(Vector2.ZERO, clampf(age / FactorySim.TRAVEL, 0, 1))
 
 func _draw_underground(e: Dictionary):
 	var center = (Vector2(e.pos) + Vector2.ONE * 0.5) * TILE
@@ -211,4 +285,4 @@ func _center_text(center: Vector2, text: String, size: int, color: Color):
 	draw_string(font, center + Vector2(-width / 2, size * 0.35), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
 static func short_number(value: int) -> String:
-	return "%.1fk" % (value / 1000.0) if value >= 1000 else str(value)
+	return "%dk" % int(value / 1000) if value >= 1000 else str(value)

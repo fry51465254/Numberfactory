@@ -13,10 +13,14 @@ func verify(condition: bool, message: String):
 		failures.append(message)
 
 func reset_board():
-	scene.sim = FactorySim.new(false)
+	scene.sim = LegacyBoardFixture.new()
 	scene.board.sim = scene.sim
 	scene.selected = Vector2i(-1, -1)
 	scene.direction = 0
+	scene.camera.position = Vector2(12 * 40, 12 * 40)
+	scene.view_zoom = 0.9
+	scene.camera.zoom = Vector2.ONE * scene.view_zoom
+	scene._layout()
 	scene._set_tool("belt")
 	scene.camera.force_update_scroll()
 
@@ -185,6 +189,7 @@ func _test_device_endpoints(machine: Vector2i):
 	reset_board()
 	scene.sim.place(Vector2i(12, 12), "multiplier", 0)
 	scene._fit_map()
+	scene.camera.position = Vector2(16 * 40, 12 * 40)
 	scene.camera.force_update_scroll()
 	press(Vector2i(10, 12))
 	drag(Vector2i(10, 24))

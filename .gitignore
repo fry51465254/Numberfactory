@@ -4,3 +4,4 @@
 /.tools/
 /qa/
 /qa-*.log
+/build/

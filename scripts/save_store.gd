@@ -1,7 +1,7 @@
 class_name SaveStore
 extends RefCounted
 
-const PATH = "user://number_factory_v1.json"
+const PATH = "user://number_factory_world_v3.json"
 
 static func save_game(sim: FactorySim, path: String = PATH) -> Error:
 	var file = FileAccess.open(path + ".tmp", FileAccess.WRITE)

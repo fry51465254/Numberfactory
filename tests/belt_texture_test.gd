@@ -39,6 +39,15 @@ func run():
 	root.add_child(scene)
 	scene.paused = true
 	await process_frame
+	verify(BoardView.short_number(999999) == "999k", "Maximum number label never rounds above product cap")
+	for value in [2, 6, 999, 1000, 27951, 65219, 999999]:
+		var token = scene.board.token_layout(value)
+		verify(token.size.x <= 34 and token.size.y <= 34, "Numeric label fits within a 40-pixel tile")
+		verify(scene.board.font.get_string_size(token.label, HORIZONTAL_ALIGNMENT_LEFT, -1, token.font_size).x <= token.size.x - 8, "Token text fits inside its own box")
+		for entry in range(4):
+			for age in [0.0, 0.1, FactorySim.TRAVEL]:
+				var offset = BoardView.token_offset(token.size, entry, age)
+				verify(absf(offset.x) + token.size.x / 2 <= 18 and absf(offset.y) + token.size.y / 2 <= 18, "Animated token cannot overlap adjacent tiles")
 	var texture = scene.board.textures.belt_turn
 	var image = texture.get_image()
 	verify(image.get_size() == Vector2i(1254, 1254), "Port calibration matches the selected GPT asset")
@@ -63,7 +72,7 @@ func run():
 			var output = Vector2(20, 0).rotated(direction * PI / 2)
 			verify(input.is_equal_approx(Vector2(FactorySim.DIRS[entry]) * 20) and output.is_equal_approx(Vector2(FactorySim.DIRS[direction]) * 20), "Calibrated ports remain aligned after rotation/mirror %d/%d" % [direction, turn])
 	if DisplayServer.get_name() != "headless":
-		scene.sim = FactorySim.new(false)
+		scene.sim = LegacyBoardFixture.new()
 		scene.sim.delivered.exploration = 30
 		scene.board.sim = scene.sim
 		for incoming in range(4):

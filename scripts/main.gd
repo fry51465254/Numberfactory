@@ -1,7 +1,9 @@
 extends Node2D
 
-const TITLES = {"source": "质数矿点", "belt": "传送带", "multiplier": "乘法机", "splitter": "分流器", "research": "研究站", "exploration": "探索站", "hub": "中央枢纽"}
-var sim = FactorySim.new()
+const TITLES = {"source": "质数矿点", "belt": "传送带", "multiplier": "乘法机", "splitter": "分流器", "research": "研究站", "exploration": "探索站", "hub": "中央枢纽", "logistics": "物流站"}
+const NONE_CELL = Vector2i(-1000000000, -1000000000)
+const MIN_ZOOM = 0.02
+var sim = WorldSim.new()
 var board: BoardView
 var camera: Camera2D
 var ui: CanvasLayer
@@ -9,9 +11,10 @@ var root: Control
 var workspace: Rect2
 var accumulator = 0.0
 var paused = false
+var save_blocked = false
 var autosave = 0.0
 var refresh_timer = 0.0
-var selected = Vector2i(-1, -1)
+var selected = NONE_CELL
 var tool = "select"
 var direction = 0
 var painting = false
@@ -42,19 +45,30 @@ var last_unlock = false
 var view_zoom = 0.9
 var loading_ui = false
 var toast_time = 0.0
+var expansion_label: Label
+var expansion_button: Button
+var prime_label: Label
+var prime_button: Button
+var supply_label: Label
+var tech_controls: Dictionary = {}
+var seed_input: LineEdit
+var logistics_box: VBoxContainer
+var logistics_fields: Array = []
 
 func _ready():
 	RenderingServer.set_default_clear_color(Color("edf0ef"))
 	var args = OS.get_cmdline_user_args()
 	if "--fresh" not in args and "--qa" not in args:
 		if FileAccess.file_exists(SaveStore.PATH) and not SaveStore.load_game(sim):
-			push_warning("存档无法读取；保留原文件并启动新工厂。")
+			save_blocked = true
+			push_warning("存档无法读取；保留原文件，新建世界后可重新保存。")
+	paused = sim.session_paused
 	board = BoardView.new()
 	board.sim = sim
 	add_child(board)
 	camera = Camera2D.new()
 	add_child(camera)
-	camera.position = Vector2(12 * 40, 12 * 40)
+	camera.position = Vector2(-4 * 40, 0)
 	camera.zoom = Vector2.ONE * view_zoom
 	_build_ui()
 	get_viewport().size_changed.connect(_layout)
@@ -79,19 +93,16 @@ func _process(delta):
 	if refresh_timer >= 0.2:
 		refresh_timer = 0
 		_refresh()
-	if sim.unlocked() and not last_unlock:
-		last_unlock = true
-		_toast("探索完成 · 新区域与质数 5 已开放")
 	board.selected = selected
 	board.tool = tool
 	board.direction = direction
 	var mouse = get_viewport().get_mouse_position()
-	board.hover = _cell(mouse) if workspace.has_point(mouse) else Vector2i(-1, -1)
+	board.hover = _cell(mouse) if workspace.has_point(mouse) else NONE_CELL
 
 func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		if "--qa" not in OS.get_cmdline_user_args():
-			SaveStore.save_game(sim)
+			_save(false)
 		get_tree().quit()
 
 func _build_ui():
@@ -102,8 +113,7 @@ func _build_ui():
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui.add_child(root)
 	var theme = Theme.new()
-	var font = SystemFont.new()
-	font.font_names = PackedStringArray(["Microsoft YaHei", "Noto Sans CJK SC", "sans-serif"])
+	var font = load("res://assets/fonts/interface.tres")
 	theme.default_font = font
 	theme.default_font_size = 14
 	theme.set_color("font_color", "Label", Color("283d36"))
@@ -147,7 +157,7 @@ func _build_ui():
 	top.add_child(top_row)
 	var title = _label("质数工厂", 22)
 	top_row.add_child(title)
-	var edition = _label("数学实验室  /  01", 12, Color("72877b"))
+	var edition = _label("无限实验室", 12, Color("72877b"))
 	edition.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	top_row.add_child(edition)
 	var spacer = Control.new()
@@ -160,7 +170,7 @@ func _build_ui():
 		paused = not paused
 		pause_button.icon = _icon("play" if paused else "pause")
 		_refresh())
-	pause_button.icon = _icon("pause")
+	pause_button.icon = _icon("play" if paused else "pause")
 	top_row.add_child(pause_button)
 	var save = _button("", "保存工厂", func(): _save(true))
 	save.icon = _icon("save")
@@ -182,51 +192,43 @@ func _build_ui():
 	goals.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	goals.add_theme_constant_override("separation", 13)
 	goal_scroll.add_child(goals)
-	goals.add_child(_label("发展目标", 17))
-	goals.add_child(_label("永久累计", 12, Color("7a8f83")))
-	for kind in ["research", "exploration", "hub"]:
-		var card = PanelContainer.new()
-		var style = StyleBoxFlat.new()
-		style.bg_color = Color("ffffff")
-		style.border_color = Color("dbe4df")
-		style.set_border_width_all(1)
-		style.set_corner_radius_all(6)
-		style.set_content_margin_all(13)
-		card.add_theme_stylebox_override("panel", style)
-		goals.add_child(card)
-		var column = VBoxContainer.new()
-		column.add_theme_constant_override("separation", 8)
-		card.add_child(column)
-		var head = HBoxContainer.new()
-		column.add_child(head)
-		head.add_child(_label(TITLES[kind], 15))
-		var badge = _label(str(FactorySim.TARGETS[kind]), 21, Color("159486") if kind == "research" else Color("d3625d") if kind == "exploration" else Color("b79725"))
-		badge.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		head.add_child(badge)
-		goal_labels[kind] = _label("", 13)
-		column.add_child(goal_labels[kind])
-		var bar = ProgressBar.new()
-		bar.custom_minimum_size.y = 5
-		bar.max_value = FactorySim.GOALS[kind]
-		bar.show_percentage = false
-		var bg = StyleBoxFlat.new()
-		bg.bg_color = Color("e8eeeb")
-		var fill = StyleBoxFlat.new()
-		fill.bg_color = badge.get_theme_color("font_color")
-		bar.add_theme_stylebox_override("background", bg)
-		bar.add_theme_stylebox_override("fill", fill)
-		goal_bars[kind] = bar
-		column.add_child(bar)
-		rate_labels[kind] = _label("", 12, Color("798d81"))
-		column.add_child(rate_labels[kind])
-		var benefit = "20 · 比例   /   60 · 筛选" if kind == "research" else "30 · 质数 5 与新区域" if kind == "exploration" else "60 · 枢纽建设"
-		column.add_child(_label(benefit, 12, Color("64796d")))
-	var mineral_title = _label("原料供应", 15)
-	goals.add_child(mineral_title)
-	var supply = _label("2   ·   6 个 / 秒\n3   ·   4 个 / 秒\n5   ·   2 个 / 秒", 14, Color("61766b"))
-	goals.add_child(supply)
-	var find = _button("定位矿点", "定位原料供应区", func(): camera.position = Vector2(6 * 40, 12 * 40))
+	goals.add_child(_label("地图扩张", 17))
+	expansion_label = _label("", 13)
+	expansion_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	goals.add_child(expansion_label)
+	expansion_button = _button("扩张一圈", "消耗研究库存，四周同时增加 8 格", func():
+		if sim.world.expand(): _toast("已开放下一圈土地" + (" · 物流额度 +1" if "logistics" in sim.world.technologies else ""))
+		_refresh())
+	expansion_button.icon = _icon("fit")
+	goals.add_child(expansion_button)
+	goals.add_child(HSeparator.new())
+	goals.add_child(_label("质数研究", 17))
+	prime_label = _label("", 13)
+	prime_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	goals.add_child(prime_label)
+	prime_button = _button("", "消耗研究库存，主动解锁下一种质数", func():
+		if sim.world.research_prime(): _toast("新质数已研究" + (" · 物流额度 +1" if "logistics" in sim.world.technologies else ""))
+		_refresh())
+	prime_button.icon = _icon("multiply")
+	goals.add_child(prime_button)
+	goals.add_child(HSeparator.new())
+	goals.add_child(_label("科技", 17))
+	for technology in WorldProgress.TECHS:
+		var id = technology
+		var label = _label("", 13)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		goals.add_child(label)
+		var button = _button({"ratio": "比例分流", "filter": "数字筛选", "logistics": "共享物流"}[id], "研究科技", func():
+			if sim.world.research_tech(id): _toast("科技已研究")
+			_refresh())
+		button.icon = _icon("check")
+		goals.add_child(button)
+		tech_controls[id] = {"label": label, "button": button}
+	goals.add_child(HSeparator.new())
+	supply_label = _label("", 13, Color("61766b"))
+	supply_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	goals.add_child(supply_label)
+	var find = _button("研究站", "回到研究站", func(): camera.position = Vector2.ZERO)
 	find.icon = _icon("locate")
 	goals.add_child(find)
 
@@ -256,8 +258,8 @@ func _build_ui():
 	inspector.add_child(splitter_box)
 	mode_input = OptionButton.new()
 	mode_input.add_item("交替分流")
-	mode_input.add_item("比例分流 · 研究 20")
-	mode_input.add_item("数字筛选 · 研究 60")
+	mode_input.add_item("比例分流")
+	mode_input.add_item("数字筛选")
 	mode_input.item_selected.connect(_set_splitter_mode)
 	splitter_box.add_child(mode_input)
 	ratio_box = VBoxContainer.new()
@@ -308,12 +310,25 @@ func _build_ui():
 		_refresh_selection())
 	remove_under.icon = _icon("trash")
 	underground_box.add_child(remove_under)
+	logistics_box = VBoxContainer.new()
+	inspector.add_child(logistics_box)
+	for slot in range(8):
+		var index = slot
+		var label = _label("", 13)
+		logistics_box.add_child(label)
+		var field = _spin(0, FactorySim.MAX_VALUE, 0)
+		field.tooltip_text = "输出数字；0 表示关闭该出口"
+		field.value_changed.connect(func(value):
+			var e = sim.at(selected)
+			if not loading_ui and not e.is_empty() and e.kind == "logistics": e.outputs[index] = int(value) if value >= 2 else 0)
+		logistics_box.add_child(field)
+		logistics_fields.append({"label": label, "field": field})
 	var rotate = _button("旋转", "顺时针旋转 · R", _rotate)
 	rotate.icon = _icon("rotate")
 	inspector.add_child(rotate)
 	var erase = _button("拆除", "拆除设备并清空缓存物料", func():
 		if sim.remove(selected):
-			selected = Vector2i(-1, -1)
+			selected = NONE_CELL
 			_refresh_selection())
 	erase.icon = _icon("trash")
 	inspector.add_child(erase)
@@ -323,7 +338,7 @@ func _build_ui():
 	bottom_row.position = Vector2(18, 13)
 	bottom_row.add_theme_constant_override("separation", 8)
 	bottom.add_child(bottom_row)
-	for item in [["select", "选择", "pointer"], ["belt", "传送带", "belt"], ["multiplier", "乘法机", "multiply"], ["splitter", "分流器", "split"], ["erase", "拆除", "trash"]]:
+	for item in [["select", "选择", "pointer"], ["belt", "传送带", "belt"], ["multiplier", "乘法机", "multiply"], ["splitter", "分流器", "split"], ["erase", "拆除", "trash"], ["logistics", "物流站", "locate"]]:
 		var id = item[0]
 		var button = _button(item[1], item[1], func(): _set_tool(id))
 		button.icon = _icon(item[2])
@@ -334,7 +349,7 @@ func _build_ui():
 	var rotate_button = _button("", "旋转 · R", _rotate)
 	rotate_button.icon = _icon("rotate")
 	bottom_row.add_child(rotate_button)
-	var fit = _button("", "显示全部地图", _fit_map)
+	var fit = _button("", "地图总览", _fit_map)
 	fit.icon = _icon("fit")
 	bottom_row.add_child(fit)
 	status_label = _label("", 12, Color("64796d"))
@@ -342,17 +357,47 @@ func _build_ui():
 	bottom.add_child(status_label)
 	new_dialog = ConfirmationDialog.new()
 	new_dialog.title = "新建工厂"
-	new_dialog.dialog_text = "清空当前布局与累计进度，重新开始？"
+	new_dialog.dialog_text = ""
 	new_dialog.ok_button_text = "重新开始"
 	new_dialog.cancel_button_text = "取消"
-	new_dialog.confirmed.connect(func():
-		sim.reset()
-		selected = Vector2i(-1, -1)
-		last_unlock = false
-		_refresh_selection()
-		_save(true))
+	var new_content = VBoxContainer.new()
+	new_content.custom_minimum_size.x = 360
+	new_content.add_theme_constant_override("separation", 12)
+	new_content.add_child(_label("当前布局、库存与研究将被清空。", 14, Color("edf0ef")))
+	new_content.add_child(_label("世界种子", 13, Color("edf0ef")))
+	new_dialog.add_child(new_content)
+	seed_input = LineEdit.new()
+	seed_input.placeholder_text = "世界种子"
+	seed_input.text = str(sim.world.seed_value)
+	new_content.add_child(seed_input)
+	new_dialog.register_text_enter(seed_input)
+	new_dialog.confirmed.connect(_new_world)
 	root.add_child(new_dialog)
 	_set_tool("select")
+
+func _new_world() -> bool:
+	var text = seed_input.text.strip_edges()
+	if not text.is_valid_int():
+		_toast("种子必须是整数，当前工厂未改变")
+		return false
+	# Clamp before integer conversion, including text beyond the 64-bit range.
+	var seed = int(clampf(float(text), WorldProgress.MIN_SEED, WorldProgress.MAX_SEED))
+	sim.reset(seed)
+	save_blocked = false
+	selected = NONE_CELL
+	paused = false
+	accumulator = 0.0
+	autosave = 0.0
+	pause_button.icon = _icon("pause")
+	view_zoom = 0.9
+	camera.zoom = Vector2.ONE * view_zoom
+	camera.position = Vector2(-160, 0)
+	_layout()
+	last_unlock = false
+	_set_tool("select")
+	_refresh_selection()
+	_save(true)
+	return true
 
 func _panel(id: String, color: Color) -> Panel:
 	var panel = Panel.new()
@@ -449,8 +494,8 @@ func _unhandled_input(event):
 			_save(true)
 		elif event.keycode == KEY_DELETE:
 			if sim.remove(selected): _refresh_selection()
-		elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
-			_set_tool(["select", "belt", "multiplier", "splitter", "erase"][event.keycode - KEY_1])
+		elif event.keycode >= KEY_1 and event.keycode <= KEY_6:
+			_set_tool(["select", "belt", "multiplier", "splitter", "erase", "logistics"][event.keycode - KEY_1])
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 			painting = false
@@ -463,7 +508,7 @@ func _unhandled_input(event):
 			panning = event.pressed
 		elif event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN] and event.pressed:
 			var before = board.get_global_transform_with_canvas().affine_inverse() * event.position
-			view_zoom = clampf(view_zoom * (1.12 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1 / 1.12), 0.45, 2.0)
+			view_zoom = clampf(view_zoom * (1.12 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1 / 1.12), MIN_ZOOM, 2.0)
 			camera.zoom = Vector2.ONE * view_zoom
 			_layout()
 			camera.force_update_scroll()
@@ -479,7 +524,7 @@ func _unhandled_input(event):
 			camera.position -= event.relative / view_zoom
 		elif painting and workspace.has_point(event.position):
 			var cell = _cell(event.position)
-			if tool in ["belt", "erase"] and last_paint.x >= 0:
+			if tool in ["belt", "erase"]:
 				_drag_to(cell)
 			elif cell != last_paint:
 				_paint(cell)
@@ -538,7 +583,7 @@ func _drag_to(cell: Vector2i):
 			if not target.is_empty() and target.pos == previous.pos:
 				last_paint = next
 				continue
-			if previous.kind == "splitter":
+			if previous.kind in ["splitter", "logistics"]:
 				reverse_belt_drag = not target.is_empty() and target.kind == "belt" and target.dir == FactorySim.DIRS.find(-step)
 			elif _accepts_belt(next, current):
 				reverse_belt_drag = true
@@ -588,7 +633,7 @@ func _accepts_belt(from: Vector2i, destination: Vector2i) -> bool:
 		return from == e.pos - FactorySim.DIRS[e.dir] or from == e.pos + FactorySim.DIRS[(e.dir + 3) % 4]
 	if e.kind == "splitter":
 		return FactorySim.DIRS.has(from - e.pos)
-	return e.kind in FactorySim.TARGETS
+	return e.kind in FactorySim.TARGETS or e.kind == "logistics"
 
 func _device_outputs_to(from: Vector2i, destination: Vector2i) -> bool:
 	var e = sim.at(from)
@@ -598,14 +643,19 @@ func _device_outputs_to(from: Vector2i, destination: Vector2i) -> bool:
 	if e.kind == "multiplier":
 		return destination == e.pos + FactorySim.DIRS[e.dir]
 	if e.kind == "source":
-		for port in range(1 if e.value == 5 else 2):
+		for port in range(sim.source_ports(e)):
 			if destination == e.pos + Vector2i(2, port): return true
+	if e.kind == "logistics":
+		for port in sim.logistics_ports(e):
+			if destination == port.pos: return true
 	return false
 
 func _snap_belt_to_input(cell: Vector2i):
 	var e = sim.at(cell)
 	var candidates: Array = []
 	for facing in range(4):
+		var neighbor = sim.at(cell + FactorySim.DIRS[facing])
+		if not neighbor.is_empty() and neighbor.kind == "logistics": continue
 		if facing != e.entry and _accepts_belt(cell, cell + FactorySim.DIRS[facing]):
 			candidates.append(facing)
 	if candidates.size() == 1:
@@ -615,7 +665,7 @@ func _paint(cell: Vector2i, entry: int = -1, crossing: bool = false) -> bool:
 	last_paint = cell
 	if tool == "select":
 		if sim.accessible(cell):
-			selected = cell if not sim.at(cell).is_empty() else Vector2i(-1, -1)
+			selected = cell if not sim.at(cell).is_empty() else NONE_CELL
 			_refresh_selection()
 	elif tool == "erase":
 		if sim.remove(cell):
@@ -638,6 +688,9 @@ func _paint(cell: Vector2i, entry: int = -1, crossing: bool = false) -> bool:
 	return true
 
 func _set_tool(value: String):
+	if value == "logistics" and "logistics" not in sim.world.technologies:
+		_toast("质数 7 开放后可研究共享物流")
+		return
 	tool = value
 	_end_stroke()
 	for id in buttons:
@@ -659,9 +712,10 @@ func _rotate():
 	_refresh_selection()
 
 func _fit_map():
-	view_zoom = minf(workspace.size.x / (32 * 40 + 60), workspace.size.y / (24 * 40 + 60))
+	var side = sim.world.half_size() * 2 * 40 + 60
+	view_zoom = clampf(minf(workspace.size.x / side, workspace.size.y / side), MIN_ZOOM, 2.0)
 	camera.zoom = Vector2.ONE * view_zoom
-	camera.position = Vector2(16 * 40, 12 * 40)
+	camera.position = Vector2.ZERO
 	_layout()
 
 func _refresh_selection():
@@ -675,25 +729,50 @@ func _refresh_selection():
 			var value = e.filters[facing]
 			filter_ports[facing].selector.select(0 if value == 0 else 2 if value == -1 else 1)
 			filter_ports[facing].number.value = maxi(2, value)
+	if not e.is_empty() and e.kind == "logistics":
+		for i in range(8): logistics_fields[i].field.value = e.outputs[i]
 	loading_ui = false
 	_refresh()
 
 func _refresh():
 	if root == null:
 		return
-	for kind in goal_labels:
-		goal_labels[kind].text = "%d / %d" % [sim.delivered[kind], FactorySim.GOALS[kind]]
-		goal_bars[kind].value = sim.delivered[kind]
-		rate_labels[kind].text = "%.2f 个 / 秒" % sim.rate(kind)
-	complete_label.text = "阶段完成" if sim.complete() else "已暂停" if paused else ""
+	var w = sim.world
+	expansion_label.text = "%d × %d → %d × %d\n第 %d 圈\n%s" % [w.half_size() * 2, w.half_size() * 2, w.half_size() * 2 + 16, w.half_size() * 2 + 16, w.expansions + 1, _cost_text(w.expansion_cost)]
+	var resource_lines = PackedStringArray()
+	var next_resources = sim.next_ring_resources()
+	var resources = next_resources.keys()
+	resources.sort()
+	for prime in resources: resource_lines.append("%d × %d%s" % [prime, next_resources[prime], "（未研究）" if prime not in w.primes else ""])
+	expansion_label.text += "\n下一圈矿点\n" + "、".join(resource_lines)
+	if "logistics" in w.technologies: expansion_label.text += "\n物流额度 +1"
+	expansion_button.disabled = not w.can_pay(w.expansion_cost)
+	prime_label.text = "质数 %d\n扩张 %d / %d\n%s" % [w.next_resource(), w.expansions - w.last_prime_expansion, WorldProgress.interval(w.stage), _cost_text(w.prime_cost)]
+	if "logistics" in w.technologies: prime_label.text += "\n物流额度 +1"
+	prime_button.text = "研究质数 %d" % w.next_resource()
+	var prime_limit = w.next_resource() * 2 > FactorySim.MAX_VALUE
+	if prime_limit: prime_label.text += "\n已达到当前整数范围的质数上限"
+	prime_button.disabled = prime_limit or not w.prime_ready() or not w.can_pay(w.prime_cost)
+	for technology in tech_controls:
+		var control = tech_controls[technology]
+		control.label.text = "已研究" if technology in w.technologies else _cost_text(w.tech_costs[technology])
+		if technology not in w.technologies:
+			if technology == "logistics": control.label.text += "\n物流站额度 +2"
+			elif "logistics" in w.technologies: control.label.text += "\n物流额度 +1"
+		if technology == "logistics" and 7 not in w.primes: control.label.text = "需要质数 7 与数字筛选\n" + control.label.text
+		control.button.disabled = not w.tech_available(technology) or not w.can_pay(w.tech_costs[technology])
+	supply_label.text = "已开放质数  %s\n物流站  %d / %d\n种子  %d\n近期交付  %.2f 个/秒" % [", ".join(w.primes.map(func(p): return str(p))), sim.logistics_used(), w.logistics_capacity, w.seed_value, sim.rate("research")]
+	buttons.logistics.disabled = "logistics" not in w.technologies
+	complete_label.text = "存档异常 · 已禁止覆盖" if save_blocked else "已暂停" if paused else ""
 	if toast_time == 0:
-		status_label.text = "设备免费   ·   %d 台设备   ·   %s" % [sim.entities.size() - 6, "已暂停" if paused else "运行中"]
+		status_label.text = "第 %d 圈   ·   %d 个已生成区块   ·   %s" % [w.expansions, sim.loaded_chunks.size(), "已暂停" if paused else "运行中"]
 	var e = sim.at(selected)
 	splitter_box.visible = not e.is_empty() and e.kind == "splitter"
 	underground_box.visible = not sim.at(selected, 1).is_empty()
-	mode_input.set_item_disabled(1, sim.delivered.research < 20)
-	mode_input.set_item_disabled(2, sim.delivered.research < 60)
-	ratio_input.editable = sim.delivered.research >= 20
+	logistics_box.visible = not e.is_empty() and e.kind == "logistics"
+	mode_input.set_item_disabled(1, not sim.splitter_unlocked(1))
+	mode_input.set_item_disabled(2, not sim.splitter_unlocked(2))
+	ratio_input.editable = sim.splitter_unlocked(1)
 	if not e.is_empty() and e.kind == "splitter":
 		var ports = sim.splitter_ports(e)
 		ratio_box.visible = e.mode == 1
@@ -701,7 +780,7 @@ func _refresh():
 			var port = filter_ports[facing]
 			port.row.visible = e.mode == 2 and facing in ports.outputs
 			port.label.text = ["东", "南", "西", "北"][facing] + " · " + ("输入" if facing in ports.inputs else "输出" if facing in ports.outputs else "未连接")
-			port.selector.disabled = e.mode != 2 or sim.delivered.research < 60 or facing not in ports.outputs
+			port.selector.disabled = e.mode != 2 or not sim.splitter_unlocked(2) or facing not in ports.outputs
 			port.number.editable = not port.selector.disabled and port.selector.selected == 1
 	if e.is_empty():
 		inspector_title.text = "建造乘法机" if tool == "multiplier" else "设备"
@@ -714,7 +793,7 @@ func _refresh():
 	inspector_status.text = "坐标 %d, %d" % [e.pos.x, e.pos.y]
 	match e.kind:
 		"source":
-			inspector_detail.text = "原料  %d\n产量  %d 个 / 秒\n出口  %d" % [e.value, 6 if e.value == 2 else 4 if e.value == 3 else 2, 1 if e.value == 5 else 2]
+			inspector_detail.text = "原料  %d\n产量  %d 个 / 秒\n出口  %d\n%s" % [e.value, sim.source_rate(e) * sim.source_ports(e), sim.source_ports(e), "已开放" if sim.source_enabled(e) else "等待质数研究"]
 		"multiplier":
 			var product = e.inputs[0] * e.inputs[1]
 			var state = "输出等待" if e.output != 0 else "乘积超出 999999" if product > FactorySim.MAX_VALUE else "加工中" if product != 0 else "等待输入 A" if e.inputs[0] == 0 else "等待输入 B"
@@ -744,8 +823,30 @@ func _refresh():
 			if not under.is_empty():
 				inspector_detail.text += "\n\n地下  %s\n物料  %s\n%s" % [["东", "南", "西", "北"][under.dir], str(under.item) if under.item else "空", "等待下游" if under.item and under.age >= FactorySim.TRAVEL else "运输中" if under.item else "等待物料"]
 				if under.item: inspector_detail.text += "\n" + _factor_text(under.item)
-		_:
-			inspector_detail.text = "接收  %d\n累计  %d\n近期  %.2f 个 / 秒\n%s" % [FactorySim.TARGETS[e.kind], sim.delivered[e.kind], sim.rate(e.kind), _factor_text(FactorySim.TARGETS[e.kind])]
+		"logistics":
+			inspector_detail.text = "合计上限  6 个/秒\n每口上限  3 个/秒\n实际  %.2f 个/秒\n\n物流库存\n%s" % [e.log_recent.size() / maxf(1.0, minf(10.0, sim.elapsed)), _stock_text(w.logistics_stock)]
+			for port in sim.logistics_ports(e):
+				var i = port.index
+				logistics_fields[i].label.text = "%s%d · %s" % [["东", "南", "西", "北"][port.facing], i % 2 + 1, {"input": "输入", "output": "输出", "none": "未连接"}[port.mode]]
+				logistics_fields[i].field.visible = port.mode == "output"
+				if port.mode != "none":
+					logistics_fields[i].label.text += " · " + sim.logistics_port_state(e, port)
+		"research":
+			inspector_detail.text = "研究库存 / 累计\n"
+			for value in w.recipes:
+				inspector_detail.text += "%d   %d / %d\n%s\n" % [value, w.count(w.research_stock, value), w.count(w.lifetime, value), _factor_text(value)]
+
+func _cost_text(cost: Dictionary) -> String:
+	var lines = PackedStringArray()
+	for value in cost:
+		lines.append("%s · %d / %d\n%s" % [value, sim.world.count(sim.world.research_stock, int(value)), cost[value], _factor_text(int(value))])
+	return "\n".join(lines)
+
+func _stock_text(stock: Dictionary) -> String:
+	var lines = PackedStringArray()
+	for value in stock:
+		if int(stock[value]) > 0: lines.append("%s · %d" % [value, stock[value]])
+	return "\n".join(lines) if not lines.is_empty() else "空"
 
 func _factor_text(value: int) -> String:
 	var parts = PackedStringArray()
@@ -755,7 +856,7 @@ func _factor_text(value: int) -> String:
 func _set_splitter_mode(index: int):
 	var e = sim.at(selected)
 	if not e.is_empty() and e.kind == "splitter":
-		if (index == 1 and sim.delivered.research >= 20) or (index == 2 and sim.delivered.research >= 60) or index == 0:
+		if sim.splitter_unlocked(index):
 			e.mode = index
 			_refresh()
 
@@ -764,6 +865,11 @@ func _toast(message: String):
 	toast_time = 4.0
 
 func _save(show_message: bool):
+	if save_blocked:
+		if show_message: _toast("存档无法读取，原文件已保留")
+		return
+	if "--qa" in OS.get_cmdline_user_args(): return
+	sim.session_paused = paused
 	var result = SaveStore.save_game(sim)
 	if show_message or result != OK:
 		_toast("工厂已保存" if result == OK else "保存失败 · 错误 %d" % result)
@@ -771,24 +877,13 @@ func _save(show_message: bool):
 func _run_visual_qa():
 	paused = true
 	if "--demo" in OS.get_cmdline_user_args():
-		var layout = load("res://tests/factory_layout.gd")
-		layout.shared(sim)
-		for i in range(3000): sim.tick()
-		selected = Vector2i(10, 15)
+		var factory = load("res://tests/auto_factory.gd").new(sim)
+		if factory.produce(sim.world.expansion_cost): sim.world.expand()
+		selected = Vector2i(-6, -7)
 		_refresh_selection()
-		last_unlock = sim.unlocked()
-		if "--completed" in OS.get_cmdline_user_args():
-			for i in range(6000): sim.tick()
-			layout.hub(sim)
-			for i in range(9000): sim.tick()
-			selected = Vector2i(10, 15)
-			_refresh_selection()
-		if "--splitter" in OS.get_cmdline_user_args():
-			selected = Vector2i(9, 15)
-			_refresh_selection()
 	await get_tree().process_frame
 	if "--detail" in OS.get_cmdline_user_args():
-		camera.position = Vector2(10.5 * 40, 12.5 * 40)
+		camera.position = Vector2(-4 * 40, -4 * 40)
 	else:
 		_fit_map()
 	await get_tree().process_frame
