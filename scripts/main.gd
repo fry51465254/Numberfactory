@@ -23,6 +23,12 @@ var last_paint = Vector2i(-1, -1)
 var reverse_belt_drag = false
 var stroke_layer = 0
 var stroke_start_pending = false
+var stroke_reverse_requested = false
+var stroke_cells: Array = []
+var stroke_undo: Array = []
+var stroke_origin_geometry: Dictionary = {}
+var stroke_retracted = false
+var stroke_press_screen = Vector2.ZERO
 var pause_button: Button
 var status_label: Label
 var inspector_title: Label
@@ -358,6 +364,7 @@ func _build_ui():
 	for item in [["select", "选择", "pointer"], ["belt", "传送带", "belt"], ["multiplier", "乘法机", "multiply"], ["splitter", "分流器", "split"], ["erase", "拆除", "trash"], ["logistics", "物流站", "locate"]]:
 		var id = item[0]
 		var button = _button(item[1], item[1], func(): _set_tool(id))
+		if id == "belt": button.tooltip_text = "传送带 · 拖动铺设；Shift 反向铺带"
 		button.icon = _icon(item[2])
 		button.toggle_mode = true
 		button.custom_minimum_size = Vector2(103, 38)
@@ -499,12 +506,11 @@ func _input(event):
 	# Release can be consumed by a UI control after a drag begins on the board.
 	if event is InputEventMouseButton and not event.pressed:
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			if stroke_start_pending: _paint(last_paint)
-			painting = false
-			last_paint = Vector2i(-1, -1)
-			reverse_belt_drag = false
-			stroke_layer = 0
-			stroke_start_pending = false
+			if painting:
+				if stroke_start_pending and not stroke_retracted: _paint(last_paint)
+				if tool == "belt" and not stroke_retracted and not reverse_belt_drag and stroke_layer == 0 and not sim.at(last_paint).is_empty() and sim.at(last_paint).kind == "belt":
+					_snap_belt_to_input(last_paint)
+			_end_stroke()
 		if event.button_index == MOUSE_BUTTON_MIDDLE:
 			panning = false
 
@@ -550,11 +556,13 @@ func _unhandled_input(event):
 				_paint(_pick_cell(event.position))
 			else:
 				painting = true
-				_begin_stroke(_cell(event.position))
+				stroke_press_screen = event.position
+				_begin_stroke(_cell(event.position), event.shift_pressed)
 	if event is InputEventMouseMotion:
 		if panning:
 			camera.position -= event.relative / view_zoom
 		elif painting and workspace.has_point(event.position):
+			if stroke_start_pending and event.position.distance_to(stroke_press_screen) < minf(4.0, 8.0 * view_zoom): return
 			var cell = _cell(event.position)
 			if tool in ["belt", "erase"]:
 				_drag_to(cell)
@@ -592,12 +600,18 @@ func _focus_cell(cell: Vector2i):
 	_layout()
 	camera.force_update_scroll()
 
-func _begin_stroke(cell: Vector2i):
-	reverse_belt_drag = false
+func _begin_stroke(cell: Vector2i, reverse: bool = false):
+	reverse_belt_drag = reverse
+	stroke_reverse_requested = reverse
 	stroke_layer = 0
 	stroke_start_pending = false
+	stroke_cells = [cell]
+	stroke_undo.clear()
+	stroke_origin_geometry.clear()
+	stroke_retracted = false
 	var e = sim.at(cell)
-	if tool == "belt" and sim.accessible(cell) and not e.is_empty() and e.kind == "belt":
+	if tool == "belt" and sim.accessible(cell) and (e.is_empty() or e.kind == "belt"):
+		stroke_origin_geometry = {"ground": _belt_geometry(cell, 0), "under": _belt_geometry(cell, 1)}
 		last_paint = cell
 		stroke_start_pending = true
 		return
@@ -613,12 +627,76 @@ func _end_stroke():
 	reverse_belt_drag = false
 	stroke_layer = 0
 	stroke_start_pending = false
+	stroke_reverse_requested = false
+	stroke_cells.clear()
+	stroke_undo.clear()
+	stroke_origin_geometry.clear()
+	stroke_retracted = false
+
+func _drag_cells(destination: Vector2i) -> Array:
+	var cells: Array = []
+	var current = last_paint
+	var delta = destination - current
+	var step = Vector2i(signi(delta.x), signi(delta.y))
+	var interval = Vector2(INF if delta.x == 0 else 1.0 / absi(delta.x), INF if delta.y == 0 else 1.0 / absi(delta.y))
+	var boundary = interval * 0.5
+	# Traverse the grid along the cursor segment instead of always going horizontal first.
+	while current != destination:
+		if current.x != destination.x and (current.y == destination.y or boundary.x <= boundary.y):
+			current.x += step.x
+			boundary.x += interval.x
+		else:
+			current.y += step.y
+			boundary.y += interval.y
+		cells.append(current)
+	return cells
+
+func _belt_geometry(cell: Vector2i, layer: int) -> Array:
+	var e = sim.at(cell, layer)
+	return [e.dir, e.entry] if not e.is_empty() and e.kind == "belt" else []
+
+func _restore_belt_geometry(cell: Vector2i, layer: int, geometry: Array):
+	var e = sim.at(cell, layer)
+	if not geometry.is_empty() and not e.is_empty() and e.kind == "belt":
+		e.dir = geometry[0]
+		e.entry = geometry[1]
+
+func _undo_stroke_step():
+	var record = stroke_undo.pop_back()
+	var tail = stroke_cells.pop_back()
+	if record.ground.is_empty():
+		sim.remove(tail)
+	else:
+		if record.under.is_empty(): sim.remove_underground(tail)
+		_restore_belt_geometry(tail, 0, record.ground)
+		_restore_belt_geometry(tail, 1, record.under)
+	_restore_belt_geometry(record.from, record.layer, record.previous)
+	sim.refresh_neighbor_ports(tail)
+	sim.refresh_neighbor_ports(record.from)
+	last_paint = record.from
+	stroke_layer = record.layer
+	direction = record.direction
+	if stroke_undo.is_empty() and not stroke_origin_geometry.is_empty():
+		if stroke_origin_geometry.ground.is_empty():
+			sim.remove(last_paint)
+		else:
+			if stroke_origin_geometry.under.is_empty(): sim.remove_underground(last_paint)
+			_restore_belt_geometry(last_paint, 0, stroke_origin_geometry.ground)
+			_restore_belt_geometry(last_paint, 1, stroke_origin_geometry.under)
+		sim.refresh_neighbor_ports(last_paint)
+		stroke_layer = 0
+		stroke_start_pending = true
+		stroke_retracted = true
+	_refresh_selection()
 
 func _drag_to(cell: Vector2i):
-	while painting and last_paint != cell:
+	for next in _drag_cells(cell):
+		if not painting: return
+		if tool == "belt" and stroke_cells.size() > 1 and next == stroke_cells[-2]:
+			_undo_stroke_step()
+			continue
 		var current = last_paint
-		var step = Vector2i(signi(cell.x - current.x), 0) if current.x != cell.x else Vector2i(0, signi(cell.y - current.y))
-		var next = current + step
+		var step = next - current
 		if tool == "erase":
 			_paint(next)
 			continue
@@ -633,6 +711,7 @@ func _drag_to(cell: Vector2i):
 				_end_stroke()
 				return
 			stroke_start_pending = false
+			stroke_retracted = false
 			stroke_layer = sim.build_belt(current, flow, -1, true)
 			if stroke_layer < 0:
 				_end_stroke()
@@ -645,14 +724,17 @@ func _drag_to(cell: Vector2i):
 		if not previous.is_empty() and previous.kind != "belt":
 			if not target.is_empty() and target.pos == previous.pos:
 				last_paint = next
+				if stroke_undo.is_empty(): stroke_cells = [next]
 				continue
-			if previous.kind in ["splitter", "logistics"]:
-				reverse_belt_drag = not target.is_empty() and target.kind == "belt" and target.dir == FactorySim.DIRS.find(-step)
-			elif _accepts_belt(next, current):
+			if previous.kind in ["multiplier", "splitter", "logistics"]:
+				reverse_belt_drag = stroke_reverse_requested or (not target.is_empty() and target.kind == "belt" and target.dir == FactorySim.DIRS.find(-step))
+			elif previous.kind in FactorySim.TARGETS:
 				reverse_belt_drag = true
 			elif not _device_outputs_to(current, next):
 				_end_stroke()
 				return
+			elif previous.kind == "source":
+				reverse_belt_drag = false
 		if not target.is_empty() and target.kind != "belt":
 			var connected = _device_outputs_to(next, current) if reverse_belt_drag else _accepts_belt(current, next)
 			if connected and not previous.is_empty() and previous.kind == "belt":
@@ -660,7 +742,10 @@ func _drag_to(cell: Vector2i):
 					previous.entry = FactorySim.DIRS.find(step)
 				else:
 					sim.redirect_belt(current, FactorySim.DIRS.find(step))
-			_end_stroke()
+			if connected:
+				_end_stroke()
+			else:
+				_toast("乘法机最多连接两个输入方向" if target.kind == "multiplier" else "此方向无法接入设备")
 			return
 		# Validate the next cell before altering any existing segment's direction.
 		if not sim.accessible(next) or (not sim.can_place(next) and target.kind != "belt"):
@@ -671,6 +756,7 @@ func _drag_to(cell: Vector2i):
 			_end_stroke()
 			_toast("仅直线传送带可地下交叉")
 			return
+		var record = {"from": current, "layer": stroke_layer, "previous": _belt_geometry(current, stroke_layer), "ground": _belt_geometry(next, 0), "under": _belt_geometry(next, 1), "direction": direction}
 		if reverse_belt_drag:
 			if not previous.is_empty() and previous.kind == "belt":
 				if FactorySim.DIRS.find(step) == previous.dir:
@@ -687,13 +773,17 @@ func _drag_to(cell: Vector2i):
 		if not _paint(next, -1 if reverse_belt_drag else FactorySim.DIRS.find(-step), true):
 			_end_stroke()
 			return
+		stroke_cells.append(next)
+		stroke_undo.append(record)
 
 func _accepts_belt(from: Vector2i, destination: Vector2i) -> bool:
 	var e = sim.at(destination)
 	if e.is_empty() or not sim.accessible(from) or not sim.accessible(destination):
 		return false
 	if e.kind == "multiplier":
-		return from == e.pos - FactorySim.DIRS[e.dir] or from == e.pos + FactorySim.DIRS[(e.dir + 3) % 4]
+		var facing = FactorySim.DIRS.find(from - e.pos)
+		var slots = sim.multiplier_ports(e).slots
+		return facing >= 0 and (facing in slots or -1 in slots)
 	if e.kind == "splitter":
 		return FactorySim.DIRS.has(from - e.pos)
 	return e.kind in FactorySim.TARGETS or e.kind == "logistics"
@@ -704,7 +794,7 @@ func _device_outputs_to(from: Vector2i, destination: Vector2i) -> bool:
 		return false
 	if e.kind == "splitter": return FactorySim.DIRS.has(destination - e.pos)
 	if e.kind == "multiplier":
-		return destination == e.pos + FactorySim.DIRS[e.dir]
+		return FactorySim.DIRS.has(destination - e.pos)
 	if e.kind == "source":
 		for port in sim.source_sockets(e):
 			if destination == port.pos: return true
@@ -741,8 +831,6 @@ func _paint(cell: Vector2i, entry: int = -1, crossing: bool = false) -> bool:
 		else:
 			placed = sim.place(cell, tool, direction)
 		if placed:
-			if tool == "belt" and stroke_layer == 0 and not reverse_belt_drag:
-				_snap_belt_to_input(cell)
 			selected = cell
 			_refresh_selection()
 		else:
@@ -860,7 +948,7 @@ func _refresh():
 		inspector_status.text = "未选择设备" if tool == "select" else "方向 · " + ["东", "南", "西", "北"][direction]
 		inspector_detail.text = ""
 		if tool == "multiplier":
-			inspector_detail.text = "输入 A · 后方\n输入 B · 左侧\n输出 · 前方\n加工周期  1 秒"
+			inspector_detail.text = "输入 A / B · 未连接\n输出 · 未连接\n加工周期  1 秒"
 		return
 	inspector_title.text = TITLES[e.kind]
 	inspector_status.text = "坐标 %d, %d" % [e.pos.x, e.pos.y]
@@ -870,7 +958,7 @@ func _refresh():
 			inspector_detail.text = "原料  %d\n总产量上限  %d 个 / 秒\n已连接出口  %d / 8\n实际出料  %.2f 个 / 秒\n%s" % [e.value, sim.source_total_rate(e), sim.source_connections(e).size(), recent_output / maxf(1.0, minf(10.0, sim.elapsed)), "已开放" if sim.source_enabled(e) else "等待质数研究"]
 		"multiplier":
 			var product = e.inputs[0] * e.inputs[1]
-			inspector_detail.text = "输入 A · 后方  %s\n输入 B · 左侧  %s\n输出缓存  %s\n加工周期  1 秒" % [str(e.inputs[0]) if e.inputs[0] else "空", str(e.inputs[1]) if e.inputs[1] else "空", str(e.output) if e.output else "空"]
+			inspector_detail.text = "输入 A  %s\n输入 B  %s\n输出缓存  %s\n加工周期  1 秒" % [str(e.inputs[0]) if e.inputs[0] else "空", str(e.inputs[1]) if e.inputs[1] else "空", str(e.output) if e.output else "空"]
 			if product != 0:
 				inspector_detail.text += "\n\n当前  %d × %d = %d" % [e.inputs[0], e.inputs[1], product]
 				if product <= FactorySim.MAX_VALUE:
@@ -881,7 +969,7 @@ func _refresh():
 				inspector_detail.text += "\n" + _factor_text(e.output)
 			for port in diagnostics.machine_ports(e):
 				inspector_detail.text += "\n\n" + port.text
-				if port.warning: board.problem_ports.append(port.facing)
+				if port.warning and port.facing >= 0: board.problem_ports.append(port.facing)
 		"belt", "splitter":
 			inspector_detail.text = "方向  %s\n运输  3 个 / 秒\n物料  %s" % [["东", "南", "西", "北"][e.dir], str(e.item) if e.item else "空"]
 			if e.item: inspector_detail.text += "\n" + _factor_text(e.item)

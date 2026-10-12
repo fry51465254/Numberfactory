@@ -48,9 +48,9 @@ func reset():
 
 func _base(kind: String, p: Vector2i, direction: int) -> Dictionary:
 	return {"kind": kind, "pos": p, "dir": direction, "item": 0,
-		"age": 0.0, "inputs": [0, 0], "last_inputs": [0, 0], "output": 0,
+		"age": 0.0, "inputs": [0, 0], "input_dirs": [(direction + 2) % 4, (direction + 3) % 4], "last_inputs": [0, 0], "output": 0,
 		"progress": 0.0, "mode": 0, "ratio": 1, "cursor": 0,
-		"filters": [0, 0, 0, 0], "layer": 0, "entry": -1, "value": 0, "charges": [0.0, 0.0],
+		"filters": [0, 0, 0, 0], "layer": 0, "entry": -1, "arrival_entry": -1, "value": 0, "charges": [0.0, 0.0],
 		"outputs": [0, 0, 0, 0, 0, 0, 0, 0], "port_age": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
 		"budget": 0.0, "log_recent": []}
 
@@ -96,9 +96,12 @@ func source_connections(e: Dictionary, snapshot: Dictionary = {}) -> Array:
 	for port in source_sockets(e):
 		var id = _target_id(snapshot, port.from, port.pos)
 		var neighbor = snapshot.get(id, {})
-		if not neighbor.is_empty() and neighbor.kind == "belt" and neighbor.dir == port.facing:
+		if not neighbor.is_empty() and neighbor.kind == "belt" and belt_connects_from(neighbor, (port.facing + 2) % 4):
 			connected.append(port)
 	return connected
+
+static func belt_connects_from(belt: Dictionary, entry: int) -> bool:
+	return belt.dir != entry and (belt.dir == (entry + 2) % 4 or belt.entry == entry)
 
 func source_enabled(_e: Dictionary) -> bool:
 	return true
@@ -158,6 +161,7 @@ func build_belt(p: Vector2i, direction: int, entry: int = -1, crossing: bool = f
 			under.layer = 1
 			under.entry = (direction + 2) % 4
 			entities[key(p) + ":under"] = under
+		refresh_neighbor_ports(p)
 		return 1
 	if crossing and not at(p).is_empty() and at(p).kind == "belt" and at(p).dir % 2 != direction % 2:
 		return -1
@@ -166,13 +170,21 @@ func build_belt(p: Vector2i, direction: int, entry: int = -1, crossing: bool = f
 	elif not redirect_belt(p, direction):
 		return -1
 	if entry >= 0: at(p).entry = entry
+	refresh_neighbor_ports(p)
 	return 0
+
+func refresh_neighbor_ports(p: Vector2i):
+	for offset in DIRS:
+		var e = entities.get(occupancy.get(key(p + offset), ""), {})
+		if not e.is_empty() and e.kind == "multiplier":
+			e.input_dirs = multiplier_ports(e).slots
 
 func remove_underground(p: Vector2i) -> bool:
 	var under = at(p, 1)
 	if under.is_empty(): return false
 	discarded += mass_of(under)
 	entities.erase(key(p) + ":under")
+	refresh_neighbor_ports(p)
 	return true
 
 func can_place(p: Vector2i) -> bool:
@@ -183,6 +195,7 @@ func place(p: Vector2i, kind: String, direction: int) -> bool:
 		return false
 	entities[key(p)] = _base(kind, p, posmod(direction, 4))
 	occupancy[key(p)] = key(p)
+	refresh_neighbor_ports(p)
 	return true
 
 func remove(p: Vector2i) -> bool:
@@ -193,6 +206,7 @@ func remove(p: Vector2i) -> bool:
 	discarded += mass_of(e)
 	occupancy.erase(key(e.pos))
 	entities.erase(key(e.pos))
+	refresh_neighbor_ports(e.pos)
 	return true
 
 func redirect_belt(p: Vector2i, direction: int) -> bool:
@@ -204,6 +218,7 @@ func redirect_belt(p: Vector2i, direction: int) -> bool:
 	e.dir = posmod(direction, 4)
 	if e.entry == e.dir:
 		e.entry = -1
+	refresh_neighbor_ports(p)
 	return true
 
 func _target_id(snapshot: Dictionary, from: Vector2i, destination: Vector2i) -> String:
@@ -231,9 +246,9 @@ func splitter_ports(e: Dictionary, snapshot: Dictionary = {}) -> Dictionary:
 			if neighbor.dir != (direction + 2) % 4 and (neighbor.dir == direction or neighbor.entry == (direction + 2) % 4):
 				ports.outputs.append(direction)
 		elif neighbor.kind == "multiplier":
-			if neighbor.pos + DIRS[neighbor.dir] == e.pos:
+			if (direction + 2) % 4 in multiplier_ports(neighbor, snapshot).outputs:
 				ports.inputs.append(direction)
-			elif e.pos == neighbor.pos - DIRS[neighbor.dir] or e.pos == neighbor.pos + DIRS[(neighbor.dir + 3) % 4]:
+			elif (direction + 2) % 4 in multiplier_ports(neighbor, snapshot).inputs:
 				ports.outputs.append(direction)
 		elif neighbor.kind in TARGETS:
 			ports.outputs.append(direction)
@@ -242,6 +257,52 @@ func splitter_ports(e: Dictionary, snapshot: Dictionary = {}) -> Dictionary:
 				if not source_shared_rate() and port.pos == e.pos:
 					ports.inputs.append(direction)
 	return ports
+
+func multiplier_ports(e: Dictionary, snapshot: Dictionary = {}) -> Dictionary:
+	if snapshot.is_empty(): snapshot = entities
+	var incoming: Array = []
+	var outgoing: Array = []
+	for facing in range(4):
+		var p = e.pos + DIRS[facing]
+		if not accessible(p): continue
+		for id in [occupancy.get(key(p), ""), key(p) + ":under"]:
+			var belt = snapshot.get(id, {})
+			if not belt.is_empty() and belt.kind == "belt" and belt.dir == (facing + 2) % 4 and facing not in incoming:
+				incoming.append(facing)
+		var neighbor = snapshot.get(_target_id(snapshot, e.pos, p), {})
+		if neighbor.is_empty(): continue
+		if neighbor.kind == "belt":
+			if belt_connects_from(neighbor, (facing + 2) % 4): outgoing.append(facing)
+		elif neighbor.kind in TARGETS:
+			outgoing.append(facing)
+		elif neighbor.kind in ["splitter", "multiplier"]:
+			# Preserve unbelted legacy device links; belts determine all four adaptive sides.
+			if facing == e.dir: outgoing.append(facing)
+			elif facing in [(e.dir + 2) % 4, (e.dir + 3) % 4]: incoming.append(facing)
+		elif neighbor.kind == "source" and not source_shared_rate():
+			for port in source_sockets(neighbor):
+				if port.pos == e.pos and facing not in incoming: incoming.append(facing)
+	var slots = [-1, -1]
+	# A cached operand keeps its side until consumed, even if the belt is removed.
+	for slot in range(2):
+		var facing = int(e.input_dirs[slot])
+		if e.inputs[slot] != 0 or facing in incoming: slots[slot] = facing
+	for offset in [2, 3, 0, 1]:
+		var facing = (e.dir + offset) % 4
+		if facing not in incoming or facing in slots: continue
+		var free = slots.find(-1)
+		if free >= 0: slots[free] = facing
+	var accepted: Array = []
+	var rejected: Array = []
+	for facing in incoming:
+		if facing in slots: accepted.append(facing)
+		else: rejected.append(facing)
+	return {"inputs": accepted, "outputs": outgoing.filter(func(facing): return facing not in slots), "slots": slots, "rejected": rejected}
+
+func multiplier_input(e: Dictionary, from: Vector2i, snapshot: Dictionary = {}) -> int:
+	var facing = DIRS.find(from - e.pos)
+	var ports = multiplier_ports(e, snapshot)
+	return ports.slots.find(facing) if facing in ports.inputs else -1
 
 func _splitter_schedule(e: Dictionary, snapshot: Dictionary) -> Array:
 	var connected = splitter_ports(e, snapshot).outputs
@@ -263,6 +324,13 @@ func _splitter_schedule(e: Dictionary, snapshot: Dictionary) -> Array:
 	return schedule
 
 func _output_directions(e: Dictionary, snapshot: Dictionary) -> Array:
+	if e.kind == "multiplier":
+		var connected = multiplier_ports(e, snapshot).outputs
+		var outputs: Array = []
+		for offset in range(4):
+			var facing = posmod(e.cursor + offset, 4)
+			if facing in connected: outputs.append(facing)
+		return outputs
 	if e.kind != "splitter": return [e.dir]
 	var schedule = _splitter_schedule(e, snapshot)
 	var result: Array = []
@@ -296,6 +364,7 @@ func tick(dt: float = STEP):
 				for port in range(source_ports(e)):
 					e.charges[port] = minf(1.0, e.charges[port] + dt * source_rate(e))
 		elif e.kind == "multiplier":
+			e.input_dirs = multiplier_ports(e, active).slots
 			if e.output != 0:
 				e.age += dt
 			elif e.inputs[0] != 0 and e.inputs[1] != 0:
@@ -360,6 +429,7 @@ func tick(dt: float = STEP):
 			for direction in outputs:
 				if _offer(snapshot, reserved, moves, id, e.pos, e.pos + DIRS[direction], value, -1):
 					if e.kind == "splitter": moves[-1].next_cursor = _next_splitter_cursor(e, snapshot, direction)
+					elif e.kind == "multiplier": moves[-1].next_cursor = (direction + 1) % 4
 					break
 	propose_after(snapshot, reserved, moves)
 	# Remove proposals whose occupied destination cannot leave this same step.
@@ -391,6 +461,7 @@ func tick(dt: float = STEP):
 		elif producer.kind == "multiplier":
 			producer.output = 0
 			producer.age = 0.0
+			producer.cursor = m.next_cursor
 		else:
 			producer.item = 0
 			producer.age = 0.0
@@ -403,10 +474,13 @@ func tick(dt: float = STEP):
 			receive_target(receiver, m.value)
 		elif receiver.kind == "multiplier":
 			receiver.inputs[m.input] = m.value
+			receiver.input_dirs[m.input] = m.entry
 		else:
 			receiver.item = m.value
 			receiver.age = 0.0
-			receiver.entry = m.entry
+			receiver.arrival_entry = m.entry
+			# Construction geometry survives side merges; animation follows the actual arrival.
+			if receiver.kind != "belt" or receiver.entry < 0: receiver.entry = m.entry
 	for kind in recent:
 		while not recent[kind].is_empty() and recent[kind][0] < elapsed - 10.0:
 			recent[kind].pop_front()
@@ -425,13 +499,8 @@ func _offer(snapshot: Dictionary, reserved: Dictionary, moves: Array, source: St
 		if not accepts_target(e, value):
 			return false
 	elif e.kind == "multiplier":
-		if from == e.pos - DIRS[e.dir]:
-			input = 0
-		elif from == e.pos + DIRS[(e.dir + 3) % 4]:
-			input = 1
-		else:
-			return false
-		if e.inputs[input] != 0:
+		input = multiplier_input(e, from, snapshot)
+		if input < 0 or e.inputs[input] != 0:
 			return false
 	elif e.kind in ["belt", "splitter"]:
 		if e.item != 0 and not _can_vacate(snapshot, id, {}):
@@ -474,9 +543,8 @@ func _vacate_search(snapshot: Dictionary, id: String, visited: Dictionary) -> bo
 		if next.kind in TARGETS and accepts_target(next, e.item):
 			return true
 		if next.kind == "multiplier":
-			if e.pos == next.pos - DIRS[next.dir] and next.inputs[0] == 0:
-				return true
-			if e.pos == next.pos + DIRS[(next.dir + 3) % 4] and next.inputs[1] == 0:
+			var slot = multiplier_input(next, e.pos, snapshot)
+			if slot >= 0 and next.inputs[slot] == 0:
 				return true
 		if next.kind == "belt" or (next.kind == "splitter" and DIRS.find(e.pos - next.pos) in splitter_ports(next, snapshot).inputs):
 			if next.kind == "belt" and e.pos == next.pos + DIRS[next.dir]: continue
@@ -549,9 +617,10 @@ func restore(data: Dictionary) -> bool:
 		for field in e:
 			if field not in ["kind", "pos", "dir"] and raw.has(field):
 				e[field] = raw[field]
-		for field in ["item", "output", "mode", "ratio", "cursor", "layer", "entry", "value"]:
+		for field in ["item", "output", "mode", "ratio", "cursor", "layer", "entry", "arrival_entry", "value"]:
 			if not valid_integer(e[field]): return false
 			e[field] = int(e[field])
+		if e.arrival_entry not in [-1, 0, 1, 2, 3]: return false
 		if not e.inputs is Array or e.inputs.size() != 2 or not e.charges is Array or e.charges.size() != 2 or not e.last_inputs is Array or e.last_inputs.size() != 2:
 			return false
 		for values in [e.inputs, e.last_inputs]:
@@ -559,6 +628,12 @@ func restore(data: Dictionary) -> bool:
 				if not valid_integer(value): return false
 		e.inputs = [int(e.inputs[0]), int(e.inputs[1])]
 		e.last_inputs = [int(e.last_inputs[0]), int(e.last_inputs[1])]
+		if not e.input_dirs is Array or e.input_dirs.size() != 2: return false
+		for slot in range(2):
+			if not valid_integer(e.input_dirs[slot]) or int(e.input_dirs[slot]) not in [-1, 0, 1, 2, 3]: return false
+			e.input_dirs[slot] = int(e.input_dirs[slot])
+			if kind == "multiplier" and e.inputs[slot] != 0 and e.input_dirs[slot] < 0: return false
+		if kind == "multiplier" and e.input_dirs[0] >= 0 and e.input_dirs[0] == e.input_dirs[1]: return false
 		if not e.outputs is Array or e.outputs.size() != 8 or not e.port_age is Array or e.port_age.size() != 8 or not e.log_recent is Array: return false
 		for i in range(8):
 			if not valid_integer(e.outputs[i]) or not valid_number(e.port_age[i]): return false

@@ -246,9 +246,9 @@ func _test_crossings():
 		advance(connected, 40)
 		verify(connected.at(Vector2i(10, 10) if flow == 0 else Vector2i(7, 10)).item == 18 and connected.at(Vector2i(9, 10)).item == 0, "Splitter and adjacent tunnel exchange only their connected stream")
 
-func press(p: Vector2i):
+func press(p: Vector2i, reverse: bool = false):
 	scene.painting = true
-	scene._begin_stroke(p)
+	scene._begin_stroke(p, reverse)
 
 func release():
 	var event = InputEventMouseButton.new()
@@ -265,7 +265,7 @@ func _test_builder():
 		var ground = scene.sim.at(Vector2i(6, 10)).duplicate(true)
 		if reversed:
 			scene.sim.place(Vector2i(6, 14), "multiplier", 1)
-			press(Vector2i(6, 14))
+			press(Vector2i(6, 14), true)
 			scene._drag_to(Vector2i(6, 8))
 		else:
 			press(Vector2i(6, 8))

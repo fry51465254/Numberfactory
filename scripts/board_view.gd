@@ -213,20 +213,26 @@ func _draw_entity(e: Dictionary):
 		draw_rect(Rect2(r.position + Vector2(5, 74), Vector2(70, 4)), Color("ccd5d1"))
 		draw_rect(Rect2(r.position + Vector2(5, 74), Vector2(70 * progress, 4)), color)
 	elif e.kind == "multiplier":
-		var rear = center - Vector2(FactorySim.DIRS[e.dir]) * 17
-		var left = center + Vector2(FactorySim.DIRS[(e.dir + 3) % 4]) * 17
-		draw_circle(rear, 3, Color("16a59a"))
-		draw_circle(left, 3, Color("16a59a"))
-		_arrow(center + Vector2(FactorySim.DIRS[e.dir]) * 15, e.dir, Color("253b36"), 0.55)
+		var ports = sim.multiplier_ports(e)
+		for facing in range(4):
+			var pos = center + Vector2(FactorySim.DIRS[facing]) * 17
+			var slot = ports.slots.find(facing)
+			if facing in ports.rejected:
+				draw_circle(pos, 4, Color("e76863"))
+			elif slot >= 0 and e.inputs[slot] != 0:
+				draw_circle(pos, 4, Color("e2b13a"))
+			elif facing in ports.inputs:
+				_arrow(pos, (facing + 2) % 4, Color("16a59a"), 0.55)
+			elif facing in ports.outputs:
+				_arrow(pos, facing, Color("253b36"), 0.55)
+			else:
+				draw_circle(pos, 2, Color("82938e"))
 		if e.output == 0:
 			draw_circle(center, 9, Color("f5faf8"))
 			var overflow = e.inputs[0] * e.inputs[1] > FactorySim.MAX_VALUE
 			_center_text(center, "!" if overflow else "×", 16, Color("e76863") if overflow else Color("157d73"))
 		if e.progress > 0:
 			draw_arc(center, 14, -PI / 2, -PI / 2 + TAU * e.progress, 24, Color("16a59a"), 2, true)
-		for port in range(2):
-			if e.inputs[port] != 0:
-				draw_circle(rear if port == 0 else left, 4, Color("e2b13a"))
 	elif e.kind == "splitter":
 		var ports = sim.splitter_ports(e)
 		for facing in range(4):
@@ -245,7 +251,8 @@ func _draw_entity(e: Dictionary):
 		var pos = center
 		# Animate within the source cell only, leaving the next cell's occupancy authoritative.
 		if e.kind == "belt":
-			pos += token_offset(token.size, e.entry if e.entry >= 0 else (e.dir + 2) % 4, e.age)
+			var arrival = e.arrival_entry if e.arrival_entry >= 0 else e.entry if e.entry >= 0 else (e.dir + 2) % 4
+			pos += token_offset(token.size, arrival, e.age)
 		var box = Rect2(pos - token.size / 2, token.size)
 		draw_style_box(_token_style(value), box)
 		_center_text(pos, token.label, token.font_size, Color("20352f"))

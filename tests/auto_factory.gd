@@ -49,14 +49,20 @@ func build(value: int, factor_order: Array = []) -> bool:
 	for input in inputs:
 		var sources: Array = []
 		for e in sim.entities.values():
-			if e.kind == "source" and e.value == input.value and not used.has(FactorySim.key(e.pos)): sources.append(e)
+			if e.kind == "source" and e.value == input.value: sources.append(e)
 		sources.sort_custom(func(a, b): return a.pos.distance_squared_to(input.pos) < b.pos.distance_squared_to(input.pos))
 		var connected = false
 		for source in sources:
-			if connect_path(source.pos + Vector2i(2, 0), input.pos, input.direction, 0):
-				used[FactorySim.key(source.pos)] = true
-				connected = true
-				break
+			var outlets = sim.source_sockets(source)
+			outlets.sort_custom(func(a, b): return a.pos.distance_squared_to(input.pos) < b.pos.distance_squared_to(input.pos))
+			for outlet in outlets:
+				var id = FactorySim.key(outlet.pos)
+				if used.has(id): continue
+				if connect_path(outlet.pos, input.pos, input.direction, outlet.facing):
+					used[id] = true
+					connected = true
+					break
+			if connected: break
 		if not connected:
 			print("No route for prime ", input.value, " to ", input.pos, ", candidate mines ", sources.size())
 			return false

@@ -27,10 +27,11 @@ func reset_board():
 func screen(cell: Vector2i) -> Vector2:
 	return scene.board.get_global_transform_with_canvas() * (Vector2(cell) * 40 + Vector2(20, 20))
 
-func press(cell: Vector2i):
+func press(cell: Vector2i, reverse: bool = false):
 	var event = InputEventMouseButton.new()
 	event.button_index = MOUSE_BUTTON_LEFT
 	event.pressed = true
+	event.shift_pressed = reverse
 	event.position = screen(cell)
 	scene._unhandled_input(event)
 
@@ -76,7 +77,7 @@ func run():
 			reset_board()
 			scene.sim.place(machine, "multiplier", rotation)
 			var outward = -FactorySim.DIRS[rotation] if port == 0 else FactorySim.DIRS[(rotation + 3) % 4]
-			press(machine)
+			press(machine, true)
 			drag(machine + outward * 3)
 			release()
 			var endpoint = machine + outward * 3
@@ -93,15 +94,14 @@ func run():
 	drag(Vector2i(14, 12))
 	release()
 	verify(scene.sim.at(Vector2i(13, 12)).is_empty() and scene.sim.at(Vector2i(14, 12)).is_empty(), "Stroke cannot continue through machine")
-	# Side without an input must not redirect a previous belt into the obstacle.
+	# A formerly invalid side now connects automatically.
 	reset_board()
 	scene.sim.place(machine, "multiplier", 0)
 	press(Vector2i(12, 14))
 	drag(Vector2i(12, 13))
-	var old_direction = scene.sim.at(Vector2i(12, 13)).dir
 	drag(machine)
 	release()
-	verify(scene.sim.at(Vector2i(12, 13)).dir == old_direction, "Invalid machine side does not mutate preceding belt")
+	verify(scene.sim.at(Vector2i(12, 13)).dir == 3 and 1 in scene.sim.multiplier_ports(scene.sim.at(machine)).inputs, "Formerly invalid south side becomes an adaptive input")
 	# Clicking an existing belt redirects it without losing its cargo.
 	reset_board()
 	scene.sim.place(Vector2i(10, 12), "belt", 0)
@@ -170,7 +170,7 @@ func _test_device_endpoints(machine: Vector2i):
 	reset_board()
 	scene.sim._add_fixed("source", Vector2i(6, 12), 2)
 	scene.sim.place(Vector2i(12, 12), "multiplier", 0)
-	press(Vector2i(12, 12))
+	press(Vector2i(12, 12), true)
 	drag(Vector2i(7, 12))
 	release()
 	verify(scene.sim.at(Vector2i(8, 12)).dir == 0 and scene.sim.at(Vector2i(6, 12)).kind == "source", "Reverse route terminates at source output without replacing source")

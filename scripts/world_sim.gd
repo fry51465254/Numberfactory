@@ -4,6 +4,7 @@ extends FactorySim
 var world: WorldProgress
 var generator: WorldGenerator
 var loaded_chunks: Dictionary = {}
+var sparse_from_ring: int = 0
 var session_paused: bool = false
 var _preview_key: String = ""
 var _preview_resources: Dictionary = {}
@@ -11,15 +12,18 @@ var logistics_last_served: String = ""
 const LOGISTICS_RATE = 6.0
 const LOG_PORTS = [Vector2i(2, 0), Vector2i(2, 1), Vector2i(0, 2), Vector2i(1, 2), Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, -1), Vector2i(1, -1)]
 
-func _init(world_seed: int = 51465254):
+func _init(world_seed: int = 51465254, first_sparse_ring: int = 0):
 	super(false)
 	world = WorldProgress.new(world_seed)
-	generator = WorldGenerator.new(world.seed_value)
-	reset(world_seed)
+	generator = WorldGenerator.new(world.seed_value, first_sparse_ring)
+	reset(world_seed, first_sparse_ring)
 
-func reset(world_seed: int = 51465254):
+func reset(world_seed: int = 51465254, first_sparse_ring: int = 0):
+	sparse_from_ring = first_sparse_ring
 	world = WorldProgress.new(world_seed)
-	generator = WorldGenerator.new(world.seed_value)
+	generator = WorldGenerator.new(world.seed_value, sparse_from_ring)
+	_preview_key = ""
+	_preview_resources = {}
 	loaded_chunks.clear()
 	session_paused = false
 	logistics_last_served = ""
@@ -74,7 +78,7 @@ func logistics_used() -> int:
 	return count
 
 func next_ring_resources() -> Dictionary:
-	var stamp = "%d:%d" % [world.seed_value, world.expansions]
+	var stamp = "%d:%d:%d" % [world.seed_value, world.expansions, sparse_from_ring]
 	if stamp == _preview_key: return _preview_resources
 	var bounds = world.bounds().grow(8)
 	var first = WorldGenerator.chunk_of(bounds.position)
@@ -269,11 +273,14 @@ func simulation_entities() -> Dictionary:
 		if e.kind != "source":
 			active[id] = e
 			if e.kind == "belt":
-				var from = e.pos - DIRS[e.dir]
-				var source_id = occupancy.get(key(from), "")
-				var source = entities.get(source_id, {})
-				if not source.is_empty() and source.kind == "source" and source_enabled(source) and _target_id(entities, from, e.pos) == id:
-					active[source_id] = source
+				var incoming: Array = [e.dir]
+				if e.entry >= 0 and (e.entry + 2) % 4 not in incoming: incoming.append((e.entry + 2) % 4)
+				for facing in incoming:
+					var from = e.pos - DIRS[facing]
+					var source_id = occupancy.get(key(from), "")
+					var source = entities.get(source_id, {})
+					if not source.is_empty() and source.kind == "source" and source_enabled(source) and _target_id(entities, from, e.pos) == id and belt_connects_from(e, (facing + 2) % 4):
+						active[source_id] = source
 	return active
 
 func restore_bounds(p: Vector2i, size: int) -> bool:
@@ -296,12 +303,23 @@ func serialize() -> Dictionary:
 	data.loaded_chunks = loaded_chunks.keys()
 	data.paused = session_paused
 	data.logistics_last_served = logistics_last_served
+	data.generation_version = WorldGenerator.CURRENT_VERSION
+	data.sparse_from_ring = sparse_from_ring
 	return data
 
 func restore(data: Dictionary) -> bool:
 	if int(data.get("version", 0)) != 3 or not data.get("world") is Dictionary or not data.get("loaded_chunks") is Array or not data.get("entities") is Array: return false
 	var candidate = WorldProgress.new()
 	if not candidate.restore(data.world): return false
+	var generation_version = data.get("generation_version", 1)
+	if not valid_integer(generation_version) or int(generation_version) not in [1, WorldGenerator.CURRENT_VERSION]: return false
+	var first_sparse_ring = candidate.expansions + 1
+	if int(generation_version) == WorldGenerator.CURRENT_VERSION:
+		var cutoff = data.get("sparse_from_ring")
+		if not valid_integer(cutoff) or int(cutoff) < 0 or int(cutoff) > candidate.expansions + 1: return false
+		first_sparse_ring = int(cutoff)
+	elif data.has("sparse_from_ring"):
+		return false
 	var chunks: Dictionary = {}
 	for raw in data.loaded_chunks:
 		var coordinates = str(raw).split(",")
@@ -326,7 +344,7 @@ func restore(data: Dictionary) -> bool:
 			if p != Vector2i(0, -1): return false
 		if raw.get("kind") in ["exploration", "hub"]: return false
 	if research_count != 1: return false
-	var candidate_generator = WorldGenerator.new(candidate.seed_value)
+	var candidate_generator = WorldGenerator.new(candidate.seed_value, first_sparse_ring)
 	var expected_sources: Dictionary = {}
 	for id in chunks:
 		var coordinates = id.split(",")
@@ -342,6 +360,7 @@ func restore(data: Dictionary) -> bool:
 		world = previous
 		return false
 	generator = candidate_generator
+	sparse_from_ring = first_sparse_ring
 	loaded_chunks = chunks
 	session_paused = bool(data.get("paused", false))
 	logistics_last_served = str(data.get("logistics_last_served", ""))

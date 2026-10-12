@@ -26,7 +26,7 @@ func _test_generation():
 			var chunk = Vector2i(x, y)
 			verify(a.deposits(chunk) == b.deposits(chunk), "Seed deterministic %s" % chunk)
 			if a.deposits(chunk) != c.deposits(chunk): differences += 1
-	verify(differences > 100, "Different seeds alter random deposit layout")
+	verify(differences > 10, "Different seeds alter sparse deposit layout")
 	verify(WorldGenerator.chunk_of(Vector2i(-1, -9)) == Vector2i(-1, -2), "Negative chunk floor")
 	for stage in range(5):
 		var p = Vector2i(16 + (WorldProgress.prime_ring(stage) - 1) * 8 + 2, 2)
