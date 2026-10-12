@@ -242,6 +242,17 @@ func source_rate(e: Dictionary) -> float:
 func source_enabled(e: Dictionary) -> bool:
 	return e.value in world.primes
 
+func source_shared_rate() -> bool:
+	return true
+
+func source_sockets(e: Dictionary) -> Array:
+	var sockets: Array = []
+	for i in range(8):
+		var facing = int(i / 2)
+		var p = e.pos + LOG_PORTS[i]
+		sockets.append({"index": i, "pos": p, "from": p - DIRS[facing], "facing": facing})
+	return sockets
+
 func splitter_unlocked(mode: int) -> bool:
 	return mode == 0 or ("ratio" if mode == 1 else "filter") in world.technologies
 
@@ -257,11 +268,12 @@ func simulation_entities() -> Dictionary:
 		var e = entities[id]
 		if e.kind != "source":
 			active[id] = e
-		elif source_enabled(e):
-			for port in range(source_ports(e)):
-				if occupancy.has(key(e.pos + Vector2i(2, port))):
-					active[id] = e
-					break
+			if e.kind == "belt":
+				var from = e.pos - DIRS[e.dir]
+				var source_id = occupancy.get(key(from), "")
+				var source = entities.get(source_id, {})
+				if not source.is_empty() and source.kind == "source" and source_enabled(source) and _target_id(entities, from, e.pos) == id:
+					active[source_id] = source
 	return active
 
 func restore_bounds(p: Vector2i, size: int) -> bool:

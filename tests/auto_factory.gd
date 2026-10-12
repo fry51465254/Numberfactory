@@ -42,7 +42,7 @@ func build(value: int, factor_order: Array = []) -> bool:
 		reserved[FactorySim.key(input.pos - FactorySim.DIRS[input.direction])] = true
 	var output = machines[-1] + Vector2i.RIGHT
 	reserved[FactorySim.key(output)] = true
-	if not connect_path(output, Vector2i(2, 0), 2):
+	if not connect_path(output, Vector2i(2, 0), 2, 0):
 		print("No route to research for product ", value)
 		return false
 	var used: Dictionary = {}
@@ -53,7 +53,7 @@ func build(value: int, factor_order: Array = []) -> bool:
 		sources.sort_custom(func(a, b): return a.pos.distance_squared_to(input.pos) < b.pos.distance_squared_to(input.pos))
 		var connected = false
 		for source in sources:
-			if connect_path(source.pos + Vector2i(2, 0), input.pos, input.direction):
+			if connect_path(source.pos + Vector2i(2, 0), input.pos, input.direction, 0):
 				used[FactorySim.key(source.pos)] = true
 				connected = true
 				break
@@ -62,7 +62,7 @@ func build(value: int, factor_order: Array = []) -> bool:
 			return false
 	return true
 
-func connect_path(start: Vector2i, end: Vector2i, end_direction: int) -> bool:
+func connect_path(start: Vector2i, end: Vector2i, end_direction: int, start_direction: int = -1) -> bool:
 	if not sim.at(start).is_empty() or not sim.at(end).is_empty(): return false
 	var grid = CrossingGrid.new()
 	grid.region = sim.world.bounds()
@@ -82,15 +82,19 @@ func connect_path(start: Vector2i, end: Vector2i, end_direction: int) -> bool:
 	# Reserve unused outlets so this test planner does not contaminate its ingredients.
 	for e in sim.entities.values():
 		if e.kind == "source":
-			for port in range(sim.source_ports(e)):
-				var outlet = e.pos + Vector2i(2, port)
+			for port in sim.source_sockets(e):
+				var outlet = port.pos
 				if grid.is_in_boundsv(outlet): grid.set_point_solid(outlet)
 	grid.set_point_solid(start, false)
 	var approach = end - FactorySim.DIRS[end_direction]
 	if not sim.at(approach).is_empty(): return false
 	grid.set_point_solid(approach, false)
-	var path = grid.get_id_path(start, approach)
+	var departure = start if start_direction < 0 else start + FactorySim.DIRS[start_direction]
+	if not grid.is_in_boundsv(departure) or grid.is_point_solid(departure): return false
+	if departure != start: grid.set_point_solid(start)
+	var path = grid.get_id_path(departure, approach)
 	if path.is_empty(): return false
+	if departure != start: path.insert(0, start)
 	path.append(end)
 	# Check the whole route before committing; a failed candidate leaves no stray belts.
 	for i in range(path.size()):

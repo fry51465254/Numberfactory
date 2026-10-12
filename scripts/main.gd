@@ -54,6 +54,9 @@ var tech_controls: Dictionary = {}
 var seed_input: LineEdit
 var logistics_box: VBoxContainer
 var logistics_fields: Array = []
+var problem_button: Button
+var problem_cell = NONE_CELL
+var research_feedback: AcceptDialog
 
 func _ready():
 	RenderingServer.set_default_clear_color(Color("edf0ef"))
@@ -185,8 +188,11 @@ func _build_ui():
 	goal_scroll.offset_left = 20
 	goal_scroll.offset_right = -20
 	goal_scroll.offset_top = 20
-	goal_scroll.offset_bottom = -16
+	goal_scroll.offset_bottom = -166
 	goal_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	goal_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
+	goal_scroll.follow_focus = true
+	goal_scroll.name = "Goals"
 	left.add_child(goal_scroll)
 	var goals = VBoxContainer.new()
 	goals.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -196,9 +202,7 @@ func _build_ui():
 	expansion_label = _label("", 13)
 	expansion_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	goals.add_child(expansion_label)
-	expansion_button = _button("扩张一圈", "消耗研究库存，四周同时增加 8 格", func():
-		if sim.world.expand(): _toast("已开放下一圈土地" + (" · 物流额度 +1" if "logistics" in sim.world.technologies else ""))
-		_refresh())
+	expansion_button = _button("扩张一圈", "消耗研究库存，四周同时增加 8 格", func(): _research_action("expand"))
 	expansion_button.icon = _icon("fit")
 	goals.add_child(expansion_button)
 	goals.add_child(HSeparator.new())
@@ -206,9 +210,7 @@ func _build_ui():
 	prime_label = _label("", 13)
 	prime_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	goals.add_child(prime_label)
-	prime_button = _button("", "消耗研究库存，主动解锁下一种质数", func():
-		if sim.world.research_prime(): _toast("新质数已研究" + (" · 物流额度 +1" if "logistics" in sim.world.technologies else ""))
-		_refresh())
+	prime_button = _button("", "消耗研究库存，主动解锁下一种质数", func(): _research_action("prime"))
 	prime_button.icon = _icon("multiply")
 	goals.add_child(prime_button)
 	goals.add_child(HSeparator.new())
@@ -218,19 +220,28 @@ func _build_ui():
 		var label = _label("", 13)
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		goals.add_child(label)
-		var button = _button({"ratio": "比例分流", "filter": "数字筛选", "logistics": "共享物流"}[id], "研究科技", func():
-			if sim.world.research_tech(id): _toast("科技已研究")
-			_refresh())
+		var button = _button({"ratio": "比例分流", "filter": "数字筛选", "logistics": "共享物流"}[id], "研究科技", func(): _research_action(id))
 		button.icon = _icon("check")
 		goals.add_child(button)
 		tech_controls[id] = {"label": label, "button": button}
-	goals.add_child(HSeparator.new())
+	var footer = VBoxContainer.new()
+	footer.name = "Summary"
+	footer.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	footer.offset_left = 20
+	footer.offset_right = -20
+	footer.offset_top = -154
+	footer.offset_bottom = -16
+	footer.add_theme_constant_override("separation", 8)
+	left.add_child(footer)
+	footer.add_child(HSeparator.new())
 	supply_label = _label("", 13, Color("61766b"))
 	supply_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	goals.add_child(supply_label)
-	var find = _button("研究站", "回到研究站", func(): camera.position = Vector2.ZERO)
+	supply_label.max_lines_visible = 4
+	supply_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	footer.add_child(supply_label)
+	var find = _button("研究站", "回到研究站", func(): _focus_cell(Vector2i.ZERO))
 	find.icon = _icon("locate")
-	goals.add_child(find)
+	footer.add_child(find)
 
 	var right = _panel("Right", Color("f7faf8"))
 	var scroll = ScrollContainer.new()
@@ -240,6 +251,7 @@ func _build_ui():
 	scroll.offset_top = 20
 	scroll.offset_bottom = -18
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.follow_focus = true
 	right.add_child(scroll)
 	var inspector = VBoxContainer.new()
 	inspector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -253,6 +265,9 @@ func _build_ui():
 	inspector_detail = _label("", 13)
 	inspector_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	inspector.add_child(inspector_detail)
+	problem_button = _button("定位阻塞", "定位实际阻塞设备或断点", func(): _focus_cell(problem_cell))
+	problem_button.icon = _icon("locate")
+	inspector.add_child(problem_button)
 	splitter_box = VBoxContainer.new()
 	splitter_box.add_theme_constant_override("separation", 10)
 	inspector.add_child(splitter_box)
@@ -282,6 +297,7 @@ func _build_ui():
 	for facing in range(4):
 		var port_direction = facing
 		var label = _label("", 13)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		splitter_box.add_child(label)
 		var row = HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
@@ -315,6 +331,7 @@ func _build_ui():
 	for slot in range(8):
 		var index = slot
 		var label = _label("", 13)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		logistics_box.add_child(label)
 		var field = _spin(0, FactorySim.MAX_VALUE, 0)
 		field.tooltip_text = "输出数字；0 表示关闭该出口"
@@ -354,7 +371,17 @@ func _build_ui():
 	bottom_row.add_child(fit)
 	status_label = _label("", 12, Color("64796d"))
 	status_label.position = Vector2(20, 57)
+	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	status_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	status_label.offset_left = 20
+	status_label.offset_right = -20
+	status_label.offset_top = 57
 	bottom.add_child(status_label)
+	research_feedback = AcceptDialog.new()
+	research_feedback.title = "条件不足"
+	research_feedback.ok_button_text = "知道了"
+	research_feedback.get_label().add_theme_color_override("font_color", Color("edf0ef"))
+	root.add_child(research_feedback)
 	new_dialog = ConfirmationDialog.new()
 	new_dialog.title = "新建工厂"
 	new_dialog.dialog_text = ""
@@ -514,11 +541,16 @@ func _unhandled_input(event):
 			camera.force_update_scroll()
 			var after = board.get_global_transform_with_canvas().affine_inverse() * event.position
 			camera.position += before - after
+			camera.force_update_scroll()
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			_set_tool("select")
 		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			painting = true
-			_begin_stroke(_cell(event.position))
+			if tool == "select":
+				_end_stroke()
+				_paint(_pick_cell(event.position))
+			else:
+				painting = true
+				_begin_stroke(_cell(event.position))
 	if event is InputEventMouseMotion:
 		if panning:
 			camera.position -= event.relative / view_zoom
@@ -528,6 +560,37 @@ func _unhandled_input(event):
 				_drag_to(cell)
 			elif cell != last_paint:
 				_paint(cell)
+
+func _pick_cell(screen: Vector2) -> Vector2i:
+	var cell = _cell(screen)
+	var exact = sim.at(cell)
+	if not exact.is_empty() and exact.kind != "belt": return exact.pos
+	var point = board.get_global_transform_with_canvas().affine_inverse() * screen
+	var tolerance = minf(5.0 / view_zoom, 6.0)
+	var best = cell
+	var distance = tolerance
+	for y in range(-1, 2):
+		for x in range(-1, 2):
+			var candidate = sim.at(cell + Vector2i(x, y))
+			if candidate.is_empty() or candidate.kind == "belt": continue
+			var size = 2 if candidate.kind in ["source", "research", "logistics"] else 1
+			var rect = Rect2(Vector2(candidate.pos) * 40, Vector2.ONE * 40 * size)
+			var nearest = point.clamp(rect.position, rect.end)
+			var gap = point.distance_to(nearest)
+			if gap < distance:
+				distance = gap
+				best = candidate.pos
+	return best
+
+func _focus_cell(cell: Vector2i):
+	if cell == NONE_CELL: return
+	view_zoom = maxf(view_zoom, 0.8)
+	camera.zoom = Vector2.ONE * view_zoom
+	var e = sim.at(cell)
+	var size = 2 if not e.is_empty() and e.kind in ["source", "research", "logistics"] else 1
+	camera.position = (Vector2(e.pos if not e.is_empty() else cell) + Vector2.ONE * size / 2.0) * 40
+	_layout()
+	camera.force_update_scroll()
 
 func _begin_stroke(cell: Vector2i):
 	reverse_belt_drag = false
@@ -643,8 +706,8 @@ func _device_outputs_to(from: Vector2i, destination: Vector2i) -> bool:
 	if e.kind == "multiplier":
 		return destination == e.pos + FactorySim.DIRS[e.dir]
 	if e.kind == "source":
-		for port in range(sim.source_ports(e)):
-			if destination == e.pos + Vector2i(2, port): return true
+		for port in sim.source_sockets(e):
+			if destination == port.pos: return true
 	if e.kind == "logistics":
 		for port in sim.logistics_ports(e):
 			if destination == port.pos: return true
@@ -682,8 +745,8 @@ func _paint(cell: Vector2i, entry: int = -1, crossing: bool = false) -> bool:
 				_snap_belt_to_input(cell)
 			selected = cell
 			_refresh_selection()
-		elif not sim.can_place(cell):
-			_toast("此处无法放置")
+		else:
+			_toast("土地尚未开放" if not sim.accessible(cell) else "物流站额度不足或占地被占用" if tool == "logistics" else "此格已被占用，无法放置")
 			return false
 	return true
 
@@ -746,13 +809,13 @@ func _refresh():
 	for prime in resources: resource_lines.append("%d × %d%s" % [prime, next_resources[prime], "（未研究）" if prime not in w.primes else ""])
 	expansion_label.text += "\n下一圈矿点\n" + "、".join(resource_lines)
 	if "logistics" in w.technologies: expansion_label.text += "\n物流额度 +1"
-	expansion_button.disabled = not w.can_pay(w.expansion_cost)
+	_action_style(expansion_button, w.can_pay(w.expansion_cost), _cost_text(w.expansion_cost))
 	prime_label.text = "质数 %d\n扩张 %d / %d\n%s" % [w.next_resource(), w.expansions - w.last_prime_expansion, WorldProgress.interval(w.stage), _cost_text(w.prime_cost)]
 	if "logistics" in w.technologies: prime_label.text += "\n物流额度 +1"
 	prime_button.text = "研究质数 %d" % w.next_resource()
 	var prime_limit = w.next_resource() * 2 > FactorySim.MAX_VALUE
 	if prime_limit: prime_label.text += "\n已达到当前整数范围的质数上限"
-	prime_button.disabled = prime_limit or not w.prime_ready() or not w.can_pay(w.prime_cost)
+	_action_style(prime_button, not prime_limit and w.prime_ready() and w.can_pay(w.prime_cost), prime_label.text)
 	for technology in tech_controls:
 		var control = tech_controls[technology]
 		control.label.text = "已研究" if technology in w.technologies else _cost_text(w.tech_costs[technology])
@@ -760,13 +823,22 @@ func _refresh():
 			if technology == "logistics": control.label.text += "\n物流站额度 +2"
 			elif "logistics" in w.technologies: control.label.text += "\n物流额度 +1"
 		if technology == "logistics" and 7 not in w.primes: control.label.text = "需要质数 7 与数字筛选\n" + control.label.text
-		control.button.disabled = not w.tech_available(technology) or not w.can_pay(w.tech_costs[technology])
-	supply_label.text = "已开放质数  %s\n物流站  %d / %d\n种子  %d\n近期交付  %.2f 个/秒" % [", ".join(w.primes.map(func(p): return str(p))), sim.logistics_used(), w.logistics_capacity, w.seed_value, sim.rate("research")]
+		control.button.disabled = technology in w.technologies
+		_action_style(control.button, w.tech_available(technology) and w.can_pay(w.tech_costs[technology]), control.label.text)
+	var prime_names = ", ".join(w.primes.map(func(p): return str(p)))
+	var prime_summary = prime_names if w.primes.size() <= 4 else "%d 种 · 最新 %d" % [w.primes.size(), w.primes[-1]]
+	supply_label.text = "已开放质数  %s\n物流站  %d / %d\n种子  %d\n近期交付  %.2f 个/秒" % [prime_summary, sim.logistics_used(), w.logistics_capacity, w.seed_value, sim.rate("research")]
+	supply_label.tooltip_text = "已开放质数  " + prime_names + "\n" + supply_label.text
 	buttons.logistics.disabled = "logistics" not in w.technologies
 	complete_label.text = "存档异常 · 已禁止覆盖" if save_blocked else "已暂停" if paused else ""
 	if toast_time == 0:
 		status_label.text = "第 %d 圈   ·   %d 个已生成区块   ·   %s" % [w.expansions, sim.loaded_chunks.size(), "已暂停" if paused else "运行中"]
 	var e = sim.at(selected)
+	var diagnostics = FlowDiagnostics.new(sim)
+	board.problem_ports = []
+	board.problem_cell = NONE_CELL
+	problem_cell = NONE_CELL
+	problem_button.visible = false
 	splitter_box.visible = not e.is_empty() and e.kind == "splitter"
 	underground_box.visible = not sim.at(selected, 1).is_empty()
 	logistics_box.visible = not e.is_empty() and e.kind == "logistics"
@@ -780,6 +852,7 @@ func _refresh():
 			var port = filter_ports[facing]
 			port.row.visible = e.mode == 2 and facing in ports.outputs
 			port.label.text = ["东", "南", "西", "北"][facing] + " · " + ("输入" if facing in ports.inputs else "输出" if facing in ports.outputs else "未连接")
+			if e.item and facing in ports.outputs and facing not in sim._output_directions(e, sim.entities): port.label.text += " · 筛选不匹配 %d" % e.item
 			port.selector.disabled = e.mode != 2 or not sim.splitter_unlocked(2) or facing not in ports.outputs
 			port.number.editable = not port.selector.disabled and port.selector.selected == 1
 	if e.is_empty():
@@ -793,11 +866,10 @@ func _refresh():
 	inspector_status.text = "坐标 %d, %d" % [e.pos.x, e.pos.y]
 	match e.kind:
 		"source":
-			inspector_detail.text = "原料  %d\n产量  %d 个 / 秒\n出口  %d\n%s" % [e.value, sim.source_rate(e) * sim.source_ports(e), sim.source_ports(e), "已开放" if sim.source_enabled(e) else "等待质数研究"]
+			var recent_output = e.log_recent.filter(func(time): return time >= sim.elapsed - 10.0).size()
+			inspector_detail.text = "原料  %d\n总产量上限  %d 个 / 秒\n已连接出口  %d / 8\n实际出料  %.2f 个 / 秒\n%s" % [e.value, sim.source_total_rate(e), sim.source_connections(e).size(), recent_output / maxf(1.0, minf(10.0, sim.elapsed)), "已开放" if sim.source_enabled(e) else "等待质数研究"]
 		"multiplier":
 			var product = e.inputs[0] * e.inputs[1]
-			var state = "输出等待" if e.output != 0 else "乘积超出 999999" if product > FactorySim.MAX_VALUE else "加工中" if product != 0 else "等待输入 A" if e.inputs[0] == 0 else "等待输入 B"
-			inspector_status.text += "\n" + state
 			inspector_detail.text = "输入 A · 后方  %s\n输入 B · 左侧  %s\n输出缓存  %s\n加工周期  1 秒" % [str(e.inputs[0]) if e.inputs[0] else "空", str(e.inputs[1]) if e.inputs[1] else "空", str(e.output) if e.output else "空"]
 			if product != 0:
 				inspector_detail.text += "\n\n当前  %d × %d = %d" % [e.inputs[0], e.inputs[1], product]
@@ -807,22 +879,21 @@ func _refresh():
 				inspector_detail.text += "\n\n上次  %d × %d = %d" % [e.last_inputs[0], e.last_inputs[1], e.last_inputs[0] * e.last_inputs[1]]
 			if e.output:
 				inspector_detail.text += "\n" + _factor_text(e.output)
+			for port in diagnostics.machine_ports(e):
+				inspector_detail.text += "\n\n" + port.text
+				if port.warning: board.problem_ports.append(port.facing)
 		"belt", "splitter":
-			inspector_status.text += "\n" + ("等待下游" if e.item != 0 and e.age >= FactorySim.TRAVEL else "运输中" if e.item != 0 else "等待物料")
 			inspector_detail.text = "方向  %s\n运输  3 个 / 秒\n物料  %s" % [["东", "南", "西", "北"][e.dir], str(e.item) if e.item else "空"]
 			if e.item: inspector_detail.text += "\n" + _factor_text(e.item)
 			if e.kind == "splitter":
 				var ports = sim.splitter_ports(e)
 				inspector_detail.text = "输入  %d 路\n输出  %d 路\n运输  3 个 / 秒\n物料  %s" % [ports.inputs.size(), ports.outputs.size(), str(e.item) if e.item else "空"]
 				if e.item: inspector_detail.text += "\n" + _factor_text(e.item)
-				if ports.outputs.is_empty():
-					inspector_status.text = "坐标 %d, %d\n无输出连接" % [e.pos.x, e.pos.y]
-				elif e.item and sim._output_directions(e, sim.entities).is_empty():
-					inspector_status.text = "坐标 %d, %d\n无匹配输出" % [e.pos.x, e.pos.y]
 			var under = sim.at(selected, 1)
 			if not under.is_empty():
-				inspector_detail.text += "\n\n地下  %s\n物料  %s\n%s" % [["东", "南", "西", "北"][under.dir], str(under.item) if under.item else "空", "等待下游" if under.item and under.age >= FactorySim.TRAVEL else "运输中" if under.item else "等待物料"]
+				inspector_detail.text += "\n\n地下  %s\n物料  %s" % [["东", "南", "西", "北"][under.dir], str(under.item) if under.item else "空"]
 				if under.item: inspector_detail.text += "\n" + _factor_text(under.item)
+				inspector_detail.text += "\n" + diagnostics.describe(under).text
 		"logistics":
 			inspector_detail.text = "合计上限  6 个/秒\n每口上限  3 个/秒\n实际  %.2f 个/秒\n\n物流库存\n%s" % [e.log_recent.size() / maxf(1.0, minf(10.0, sim.elapsed)), _stock_text(w.logistics_stock)]
 			for port in sim.logistics_ports(e):
@@ -831,15 +902,61 @@ func _refresh():
 				logistics_fields[i].field.visible = port.mode == "output"
 				if port.mode != "none":
 					logistics_fields[i].label.text += " · " + sim.logistics_port_state(e, port)
+				if port.mode == "output":
+					var state = diagnostics.logistics_output(e, port)
+					logistics_fields[i].label.text += "\n" + state.text
+					if state.warning and problem_cell == NONE_CELL:
+						problem_cell = state.cell
+						board.problem_cell = state.cell
+						problem_button.visible = true
 		"research":
 			inspector_detail.text = "研究库存 / 累计\n"
 			for value in w.recipes:
 				inspector_detail.text += "%d   %d / %d\n%s\n" % [value, w.count(w.research_stock, value), w.count(w.lifetime, value), _factor_text(value)]
+	if e.kind in ["belt", "splitter", "multiplier"]:
+		var diagnosis = diagnostics.describe(e)
+		inspector_status.text = "坐标 %d, %d\n%s" % [e.pos.x, e.pos.y, diagnosis.text]
+		if diagnosis.warning:
+			problem_cell = diagnosis.cell
+			board.problem_cell = problem_cell
+			problem_button.visible = problem_cell != NONE_CELL
+			if e.kind in ["belt", "splitter"] and e.item:
+				var outputs = sim.splitter_ports(e).outputs if e.kind == "splitter" else [e.dir]
+				for facing in outputs:
+					if facing not in sim._output_directions(e, sim.entities) or diagnostics.downstream(e, e.item, facing).warning: board.problem_ports.append(facing)
+
+func _action_style(button: Button, ready: bool, hint: String):
+	button.modulate = Color.WHITE if ready else Color("aab6b0")
+	button.tooltip_text = hint
+
+func _research_action(action: String):
+	var w = sim.world
+	var cost = w.expansion_cost if action == "expand" else w.prime_cost if action == "prime" else w.tech_costs[action]
+	var reasons = PackedStringArray()
+	if action == "prime":
+		if w.next_resource() * 2 > FactorySim.MAX_VALUE: reasons.append("已达到整数范围上限")
+		elif not w.prime_ready(): reasons.append("还需扩张 %d 圈" % (WorldProgress.interval(w.stage) - w.expansions + w.last_prime_expansion))
+	elif action not in ["expand", "prime"] and not w.tech_available(action):
+		if action in w.technologies: reasons.append("该科技已研究")
+		elif action == "logistics": reasons.append("需要质数 7 与数字筛选")
+		else: reasons.append("需要先研究比例分流")
+	for value in cost:
+		var missing = int(cost[value]) - w.count(w.research_stock, int(value))
+		if missing > 0: reasons.append("数字 %s 还缺 %d 个" % [value, missing])
+	if not reasons.is_empty():
+		_toast("；".join(reasons))
+		research_feedback.dialog_text = "\n".join(reasons)
+		research_feedback.popup_centered(Vector2i(360, 180))
+		return
+	var success = w.expand() if action == "expand" else w.research_prime() if action == "prime" else w.research_tech(action)
+	_toast(("已开放下一圈土地" if action == "expand" else "新质数已研究" if action == "prime" else "科技已研究") + (" · 物流额度增加" if "logistics" in w.technologies else "") if success else "条件不足，未消耗库存")
+	_refresh()
 
 func _cost_text(cost: Dictionary) -> String:
 	var lines = PackedStringArray()
 	for value in cost:
-		lines.append("%s · %d / %d\n%s" % [value, sim.world.count(sim.world.research_stock, int(value)), cost[value], _factor_text(int(value))])
+		var stock = sim.world.count(sim.world.research_stock, int(value))
+		lines.append("%s · 库存 %d / 需要 %d\n%s\n%s" % [value, stock, cost[value], "还缺 %d 个" % maxi(0, int(cost[value]) - stock) if stock < int(cost[value]) else "库存充足", _factor_text(int(value))])
 	return "\n".join(lines)
 
 func _stock_text(stock: Dictionary) -> String:

@@ -77,6 +77,29 @@ func source_ports(e: Dictionary) -> int:
 func source_rate(e: Dictionary) -> float:
 	return 3.0 if e.value == 2 else 2.0
 
+func source_total_rate(e: Dictionary) -> float:
+	return source_rate(e) * source_ports(e)
+
+func source_shared_rate() -> bool:
+	return false
+
+func source_sockets(e: Dictionary) -> Array:
+	var sockets: Array = []
+	for i in range(source_ports(e)):
+		var p = e.pos + Vector2i(2, i)
+		sockets.append({"index": i, "pos": p, "from": p - Vector2i.RIGHT, "facing": 0})
+	return sockets
+
+func source_connections(e: Dictionary, snapshot: Dictionary = {}) -> Array:
+	if snapshot.is_empty(): snapshot = entities
+	var connected: Array = []
+	for port in source_sockets(e):
+		var id = _target_id(snapshot, port.from, port.pos)
+		var neighbor = snapshot.get(id, {})
+		if not neighbor.is_empty() and neighbor.kind == "belt" and neighbor.dir == port.facing:
+			connected.append(port)
+	return connected
+
 func source_enabled(_e: Dictionary) -> bool:
 	return true
 
@@ -215,8 +238,8 @@ func splitter_ports(e: Dictionary, snapshot: Dictionary = {}) -> Dictionary:
 		elif neighbor.kind in TARGETS:
 			ports.outputs.append(direction)
 		elif neighbor.kind == "source":
-			for port in range(source_ports(neighbor)):
-				if neighbor.pos + Vector2i(2, port) == e.pos:
+			for port in source_sockets(neighbor):
+				if not source_shared_rate() and port.pos == e.pos:
 					ports.inputs.append(direction)
 	return ports
 
@@ -264,9 +287,14 @@ func tick(dt: float = STEP):
 			continue
 		if e.kind == "source":
 			if not source_enabled(e): continue
-			var per_port = source_rate(e)
-			for port in range(source_ports(e)):
-				e.charges[port] = minf(1.0, e.charges[port] + dt * per_port)
+			if source_shared_rate():
+				# Retain fractional overshoot without accumulating a backlog during blockage.
+				e.budget = minf(1.0 + dt * source_total_rate(e), e.budget + dt * source_total_rate(e))
+				for i in range(8): e.port_age[i] = minf(TRAVEL, e.port_age[i] + dt)
+				while not e.log_recent.is_empty() and e.log_recent[0] < elapsed - 10.0: e.log_recent.pop_front()
+			else:
+				for port in range(source_ports(e)):
+					e.charges[port] = minf(1.0, e.charges[port] + dt * source_rate(e))
 		elif e.kind == "multiplier":
 			if e.output != 0:
 				e.age += dt
@@ -307,10 +335,23 @@ func tick(dt: float = STEP):
 			continue
 		if e.kind == "source":
 			if not source_enabled(e): continue
-			for port in range(source_ports(e)):
-				if e.charges[port] >= 0.999999:
-					var from = e.pos + Vector2i(1, port)
-					_offer(snapshot, reserved, moves, id, from, from + Vector2i.RIGHT, e.value, port)
+			if source_shared_rate():
+				if e.budget < 0.999999: continue
+				var connected = source_connections(e, snapshot)
+				for offset in range(8):
+					var slot = posmod(e.cursor + offset, 8)
+					if e.port_age[slot] + 0.000001 < TRAVEL: continue
+					var sent = false
+					for port in connected:
+						if port.index == slot and _offer(snapshot, reserved, moves, id, port.from, port.pos, e.value, slot):
+							sent = true
+							break
+					if sent: break
+			else:
+				for port in range(source_ports(e)):
+					if e.charges[port] >= 0.999999:
+						var from = e.pos + Vector2i(1, port)
+						_offer(snapshot, reserved, moves, id, from, from + Vector2i.RIGHT, e.value, port)
 		elif e.kind in ["belt", "splitter", "multiplier"]:
 			var value = e.output if e.kind == "multiplier" else e.item
 			if value == 0 or e.age + 0.000001 < TRAVEL:
@@ -339,7 +380,13 @@ func tick(dt: float = STEP):
 		if extra_departure(m): continue
 		var producer = entities[m.source]
 		if producer.kind == "source":
-			producer.charges[m.port] = 0.0
+			if source_shared_rate():
+				producer.budget = maxf(0.0, producer.budget - 1.0)
+				producer.port_age[m.port] = 0.0
+				producer.cursor = (m.port + 1) % 8
+				producer.log_recent.append(elapsed)
+			else:
+				producer.charges[m.port] = 0.0
 			emitted += prime_count(m.value)
 		elif producer.kind == "multiplier":
 			producer.output = 0
@@ -519,10 +566,13 @@ func restore(data: Dictionary) -> bool:
 			e.port_age[i] = clampf(float(e.port_age[i]), 0.0, TRAVEL)
 			if e.outputs[i] < 0 or e.outputs[i] == 1 or e.outputs[i] > MAX_VALUE: return false
 		for field in ["budget", "age", "progress"]:
+			# Early shared-rate saves can contain an epsilon-scale mining credit residue.
+			if field == "budget" and kind == "source" and source_shared_rate() and valid_number(e[field]) and float(e[field]) >= -0.000001:
+				e[field] = maxf(0.0, float(e[field]))
 			if not valid_number(e[field]) or float(e[field]) < 0: return false
 		for time in e.log_recent:
 			if not valid_number(time) or float(time) < 0 or float(time) > float(data.get("elapsed", 0)): return false
-		e.budget = clampf(float(e.budget), 0.0, 1.0)
+		e.budget = clampf(float(e.budget), 0.0, 1.0 + STEP * source_total_rate(e) if e.kind == "source" and source_shared_rate() else 1.0)
 		if not e.filters is Array or e.filters.size() != 4: return false
 		for i in range(4):
 			if not valid_integer(e.filters[i]): return false

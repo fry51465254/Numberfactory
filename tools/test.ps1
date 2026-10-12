@@ -7,7 +7,7 @@ if (-not $Godot) {
         $Godot = (Get-Command godot -ErrorAction Stop).Source
     }
 }
-$tests = @('simulation', 'belt_build', 'routing', 'belt_texture', 'interface', 'world', 'logistics', 'world_cycle', 'save_store')
+$tests = @('simulation', 'belt_build', 'routing', 'belt_texture', 'interface', 'world', 'logistics', 'world_cycle', 'save_store', 'usability')
 if ($FullGrowth) { $tests += @('planner', 'growth', 'checkpoint') }
 foreach ($test in $tests) {
     & $Godot --headless --path $root --script "res://tests/$($test)_test.gd" --log-file (Join-Path $root "qa-$test.log") -- --qa --test

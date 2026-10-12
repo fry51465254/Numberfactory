@@ -15,6 +15,8 @@ var selected = Vector2i(-1000000000, -1000000000)
 var hover = Vector2i(-1000000000, -1000000000)
 var tool = "select"
 var direction = 0
+var problem_cell = Vector2i(-1000000000, -1000000000)
+var problem_ports: Array = []
 var font: Font
 var pulse = 0.0
 
@@ -136,16 +138,27 @@ func _draw_world():
 	if not e.is_empty():
 		var size = 2 if e.kind in ["source", "research", "logistics"] else 1
 		draw_rect(Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size).grow(2), Color("13998e"), false, 2.5)
+		for facing in problem_ports:
+			var pos = (Vector2(e.pos) + Vector2.ONE * 0.5) * TILE + Vector2(FactorySim.DIRS[facing]) * 17
+			draw_circle(pos, 6, Color("f4c34f"))
+			_center_text(pos, "!", 11, Color("493b1c"))
+	if problem_cell != Vector2i(-1000000000, -1000000000):
+		var culprit = sim.entities.get(sim.occupancy.get(FactorySim.key(problem_cell), ""), {})
+		var size = 2 if not culprit.is_empty() and culprit.kind in ["source", "research", "logistics"] else 1
+		draw_rect(Rect2(Vector2(problem_cell) * TILE, Vector2.ONE * TILE * size).grow(3), Color("c79925"), false, 2)
 	if area.has_point(hover) and tool != "select":
 		var size = 2 if tool == "logistics" else 1
 		var valid = sim.can_place_logistics(hover) if tool == "logistics" else sim.can_place(hover)
 		if tool == "erase": valid = not sim.at(hover).is_empty() and sim.at(hover).kind in ["belt", "multiplier", "splitter", "logistics"]
 		elif tool == "belt": valid = valid or (sim.accessible(hover) and not sim.at(hover).is_empty())
-		var color = Color("1aaf9f") if valid else Color("e76863")
+		var color = Color("1aaf9f") if valid else Color("728078")
 		var r = Rect2(Vector2(hover) * TILE, Vector2.ONE * TILE * size)
 		draw_rect(r, Color(color, 0.16))
 		draw_rect(r, color, false, 2)
-		if tool != "erase": _arrow(r.get_center(), direction, color)
+		if not valid:
+			draw_line(r.get_center() - Vector2(5, 5), r.get_center() + Vector2(5, 5), color, 2)
+			draw_line(r.get_center() - Vector2(5, -5), r.get_center() + Vector2(5, -5), color, 2)
+		elif tool != "erase": _arrow(r.get_center(), direction, color)
 
 func _draw_entity(e: Dictionary):
 	var big = e.kind in ["source", "research", "exploration", "hub", "logistics"]
@@ -174,8 +187,11 @@ func _draw_entity(e: Dictionary):
 		var color = COLORS.get(e.value, Color("d5ad35"))
 		draw_circle(center, 19, Color("f5faf8"))
 		_center_text(center, str(e.value), 28, color)
-		for i in range(sim.source_ports(e)):
-			_arrow(Vector2(e.pos + Vector2i(2, i)) * TILE + Vector2(-5, TILE / 2), 0, color)
+		var connections = sim.source_connections(e)
+		for port in sim.source_sockets(e):
+			var position = (Vector2(port.from) + Vector2.ONE * 0.5) * TILE + Vector2(FactorySim.DIRS[port.facing]) * 17
+			if port in connections: _arrow(position, port.facing, Color("159486"), 0.65)
+			else: draw_circle(position, 2, Color("82938e"))
 		if not sim.source_enabled(e):
 			draw_rect(r, Color(0.4, 0.45, 0.43, 0.55))
 			_center_text(center, "未研究", 14, Color.WHITE)
@@ -200,7 +216,7 @@ func _draw_entity(e: Dictionary):
 		var rear = center - Vector2(FactorySim.DIRS[e.dir]) * 17
 		var left = center + Vector2(FactorySim.DIRS[(e.dir + 3) % 4]) * 17
 		draw_circle(rear, 3, Color("16a59a"))
-		draw_circle(left, 3, Color("e76863"))
+		draw_circle(left, 3, Color("16a59a"))
 		_arrow(center + Vector2(FactorySim.DIRS[e.dir]) * 15, e.dir, Color("253b36"), 0.55)
 		if e.output == 0:
 			draw_circle(center, 9, Color("f5faf8"))
@@ -218,7 +234,7 @@ func _draw_entity(e: Dictionary):
 			if facing in ports.inputs:
 				_arrow(pos, (facing + 2) % 4, Color("157d73"), 0.6)
 			elif facing in ports.outputs:
-				_arrow(pos, facing, Color("b4534e"), 0.6)
+				_arrow(pos, facing, Color("253b36"), 0.6)
 			else:
 				draw_circle(pos, 2, Color("82938e"))
 	else:
