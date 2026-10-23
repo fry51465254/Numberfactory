@@ -1,4 +1,4 @@
-param([string]$Godot = '', [switch]$FullGrowth)
+param([string]$Godot = '', [switch]$FullGrowth, [switch]$Onboarding)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $Godot) {
@@ -7,7 +7,8 @@ if (-not $Godot) {
         $Godot = (Get-Command godot -ErrorAction Stop).Source
     }
 }
-$tests = @('simulation', 'belt_build', 'routing', 'belt_texture', 'interface', 'world', 'logistics', 'world_cycle', 'save_store', 'usability', 'generation', 'adaptive', 'device_texture')
+$tests = @('simulation', 'belt_build', 'routing', 'belt_texture', 'interface', 'world', 'logistics', 'world_cycle', 'save_store', 'usability', 'generation', 'adaptive', 'device_texture', 'build_tools')
+if ($Onboarding) { $tests += @('onboarding') }
 if ($FullGrowth) { $tests += @('planner', 'growth', 'checkpoint') }
 foreach ($test in $tests) {
     & $Godot --headless --path $root --script "res://tests/$($test)_test.gd" --log-file (Join-Path $root "qa-$test.log") -- --qa --test

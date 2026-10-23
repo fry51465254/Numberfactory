@@ -63,6 +63,20 @@ var logistics_fields: Array = []
 var problem_button: Button
 var problem_cell = NONE_CELL
 var research_feedback: AcceptDialog
+var history = BuildHistory.new()
+var group_selection: Array = []
+var clipboard_nodes: Array = []
+var pasting = false
+var paste_plan: Dictionary = {}
+var paste_stamp = ""
+var clipboard_revision = 0
+var box_armed = false
+var box_selecting = false
+var box_press = Vector2.ZERO
+var box_origin = Vector2i.ZERO
+var box_area = Rect2i()
+var edit_buttons: Dictionary = {}
+var rotation_buttons: Array = []
 
 func _ready():
 	RenderingServer.set_default_clear_color(Color("edf0ef"))
@@ -107,6 +121,12 @@ func _process(delta):
 	board.direction = direction
 	var mouse = get_viewport().get_mouse_position()
 	board.hover = _cell(mouse) if workspace.has_point(mouse) else NONE_CELL
+	board.group_selection = group_selection
+	board.selection_area = box_area if box_selecting else Rect2i()
+	if pasting and workspace.has_point(mouse):
+		_preview_paste(_cell(mouse))
+	else:
+		board.blueprint_nodes = []
 
 func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
@@ -291,14 +311,14 @@ func _build_ui():
 	for name in ["东", "南", "西", "北"]: primary_output.add_item(name)
 	primary_output.item_selected.connect(func(v):
 		var e = sim.at(selected)
-		if not loading_ui and not e.is_empty() and e.kind == "splitter": e.dir = v)
+		if not loading_ui and not e.is_empty() and e.kind == "splitter": _edit_setting("dir", v))
 	ratio_box.add_child(primary_output)
 	ratio_box.add_child(_label("主输出 : 各其他输出", 13))
 	ratio_input = _spin(1, 9, 1)
 	ratio_input.suffix = ": 1"
 	ratio_input.value_changed.connect(func(v):
 		var e = sim.at(selected)
-		if not loading_ui and not e.is_empty() and e.kind == "splitter": e.ratio = int(v))
+		if not loading_ui and not e.is_empty() and e.kind == "splitter": _edit_setting("ratio", int(v)))
 	ratio_box.add_child(ratio_input)
 	for facing in range(4):
 		var port_direction = facing
@@ -318,17 +338,20 @@ func _build_ui():
 		selector.item_selected.connect(func(index):
 			var e = sim.at(selected)
 			if not loading_ui and not e.is_empty() and e.kind == "splitter":
-				e.filters[port_direction] = 0 if index == 0 else -1 if index == 2 else int(number.value)
+				_edit_setting("filters", 0 if index == 0 else -1 if index == 2 else int(number.value), port_direction)
 				_refresh())
 		number.value_changed.connect(func(value):
 			var e = sim.at(selected)
 			if not loading_ui and not e.is_empty() and e.kind == "splitter" and selector.selected == 1:
-				e.filters[port_direction] = int(value))
+				_edit_setting("filters", int(value), port_direction))
 		filter_ports.append({"label": label, "row": row, "selector": selector, "number": number})
 	underground_box = VBoxContainer.new()
 	inspector.add_child(underground_box)
 	var remove_under = _button("拆除地下通道", "保留地面带，仅清空并拆除地下通道", func():
+		history.begin(sim, "拆除地下通道")
+		history.watch(selected)
 		sim.remove_underground(selected)
+		history.commit()
 		_refresh_selection())
 	remove_under.icon = _icon("trash")
 	underground_box.add_child(remove_under)
@@ -343,16 +366,15 @@ func _build_ui():
 		field.tooltip_text = "输出数字；0 表示关闭该出口"
 		field.value_changed.connect(func(value):
 			var e = sim.at(selected)
-			if not loading_ui and not e.is_empty() and e.kind == "logistics": e.outputs[index] = int(value) if value >= 2 else 0)
+			if not loading_ui and not e.is_empty() and e.kind == "logistics": _edit_setting("outputs", int(value) if value >= 2 else 0, index))
 		logistics_box.add_child(field)
 		logistics_fields.append({"label": label, "field": field})
 	var rotate = _button("旋转", "顺时针旋转 · R", _rotate)
 	rotate.icon = _icon("rotate")
+	rotation_buttons.append(rotate)
 	inspector.add_child(rotate)
 	var erase = _button("拆除", "拆除设备并清空缓存物料", func():
-		if sim.remove(selected):
-			selected = NONE_CELL
-			_refresh_selection())
+		_delete_selection())
 	erase.icon = _icon("trash")
 	inspector.add_child(erase)
 
@@ -372,10 +394,16 @@ func _build_ui():
 		bottom_row.add_child(button)
 	var rotate_button = _button("", "旋转 · R", _rotate)
 	rotate_button.icon = _icon("rotate")
+	rotation_buttons.append(rotate_button)
 	bottom_row.add_child(rotate_button)
 	var fit = _button("", "地图总览", _fit_map)
 	fit.icon = _icon("fit")
 	bottom_row.add_child(fit)
+	for command in [["copy", "copy", "复制选中设备 · Ctrl+C", _copy_selection], ["paste", "clipboard-paste", "粘贴蓝图 · Ctrl+V；旋转 · R；取消 · Esc", _start_paste], ["undo", "undo-2", "撤销建造 · Ctrl+Z", func(): _history_action(false)], ["redo", "redo-2", "重做建造 · Ctrl+Y / Ctrl+Shift+Z", func(): _history_action(true)]]:
+		var button = _button("", command[2], command[3])
+		button.icon = _icon(command[1])
+		edit_buttons[command[0]] = button
+		bottom_row.add_child(button)
 	status_label = _label("", 12, Color("64796d"))
 	status_label.position = Vector2(20, 57)
 	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -417,6 +445,11 @@ func _new_world() -> bool:
 	# Clamp before integer conversion, including text beyond the 64-bit range.
 	var seed = int(clampf(float(text), WorldProgress.MIN_SEED, WorldProgress.MAX_SEED))
 	sim.reset(seed)
+	history.attach(sim)
+	history.clear()
+	group_selection.clear()
+	clipboard_nodes.clear()
+	pasting = false
 	save_blocked = false
 	selected = NONE_CELL
 	paused = false
@@ -506,6 +539,11 @@ func _input(event):
 	# Release can be consumed by a UI control after a drag begins on the board.
 	if event is InputEventMouseButton and not event.pressed:
 		if event.button_index == MOUSE_BUTTON_LEFT:
+			if box_armed:
+				if box_selecting: _select_box(box_area)
+				box_armed = false
+				box_selecting = false
+				board.selection_area = Rect2i()
 			if painting:
 				if stroke_start_pending and not stroke_retracted: _paint(last_paint)
 				if tool == "belt" and not stroke_retracted and not reverse_belt_drag and stroke_layer == 0 and not sim.at(last_paint).is_empty() and sim.at(last_paint).kind == "belt":
@@ -516,6 +554,16 @@ func _input(event):
 
 func _unhandled_input(event):
 	if event is InputEventKey and event.pressed and not event.echo:
+		if event.ctrl_pressed and event.keycode in [KEY_C, KEY_V, KEY_Z, KEY_Y]:
+			var focus = get_viewport().gui_get_focus_owner()
+			if focus is LineEdit or focus is TextEdit: return
+			match event.keycode:
+				KEY_C: _copy_selection()
+				KEY_V: _start_paste()
+				KEY_Z: _history_action(event.shift_pressed)
+				KEY_Y: _history_action(true)
+			get_viewport().set_input_as_handled()
+			return
 		if event.keycode == KEY_ESCAPE:
 			_set_tool("select")
 		elif event.keycode == KEY_R:
@@ -526,7 +574,7 @@ func _unhandled_input(event):
 		elif event.keycode == KEY_S and event.ctrl_pressed:
 			_save(true)
 		elif event.keycode == KEY_DELETE:
-			if sim.remove(selected): _refresh_selection()
+			_delete_selection()
 		elif event.keycode >= KEY_1 and event.keycode <= KEY_6:
 			_set_tool(["select", "belt", "multiplier", "splitter", "erase", "logistics"][event.keycode - KEY_1])
 	if event is InputEventMouseButton:
@@ -551,9 +599,17 @@ func _unhandled_input(event):
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			_set_tool("select")
 		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			if tool == "select":
+			var focus = get_viewport().gui_get_focus_owner()
+			if focus != null: focus.release_focus()
+			if pasting:
+				_place_blueprint(_cell(event.position))
+			elif tool == "select":
 				_end_stroke()
 				_paint(_pick_cell(event.position))
+				box_armed = true
+				box_selecting = false
+				box_press = event.position
+				box_origin = _cell(event.position)
 			else:
 				painting = true
 				stroke_press_screen = event.position
@@ -561,6 +617,12 @@ func _unhandled_input(event):
 	if event is InputEventMouseMotion:
 		if panning:
 			camera.position -= event.relative / view_zoom
+		elif box_armed:
+			if event.position.distance_to(box_press) >= maxf(5.0, 8.0 * view_zoom):
+				box_selecting = true
+				var cell = _cell(event.position.clamp(workspace.position, workspace.end - Vector2.ONE))
+				box_area = Rect2i(Vector2i(mini(cell.x, box_origin.x), mini(cell.y, box_origin.y)), Vector2i(absi(cell.x - box_origin.x) + 1, absi(cell.y - box_origin.y) + 1))
+				board.selection_area = box_area
 		elif painting and workspace.has_point(event.position):
 			if stroke_start_pending and event.position.distance_to(stroke_press_screen) < minf(4.0, 8.0 * view_zoom): return
 			var cell = _cell(event.position)
@@ -601,6 +663,7 @@ func _focus_cell(cell: Vector2i):
 	camera.force_update_scroll()
 
 func _begin_stroke(cell: Vector2i, reverse: bool = false):
+	history.begin(sim, "拆除设备" if tool == "erase" else "铺设传送带" if tool == "belt" else "建造设备")
 	reverse_belt_drag = reverse
 	stroke_reverse_requested = reverse
 	stroke_layer = 0
@@ -622,6 +685,7 @@ func _begin_stroke(cell: Vector2i, reverse: bool = false):
 		_end_stroke()
 
 func _end_stroke():
+	history.commit()
 	painting = false
 	last_paint = Vector2i(-1, -1)
 	reverse_belt_drag = false
@@ -632,6 +696,7 @@ func _end_stroke():
 	stroke_undo.clear()
 	stroke_origin_geometry.clear()
 	stroke_retracted = false
+	_refresh_edit_buttons()
 
 func _drag_cells(destination: Vector2i) -> Array:
 	var cells: Array = []
@@ -656,6 +721,7 @@ func _belt_geometry(cell: Vector2i, layer: int) -> Array:
 	return [e.dir, e.entry] if not e.is_empty() and e.kind == "belt" else []
 
 func _restore_belt_geometry(cell: Vector2i, layer: int, geometry: Array):
+	history.watch(cell)
 	var e = sim.at(cell, layer)
 	if not geometry.is_empty() and not e.is_empty() and e.kind == "belt":
 		e.dir = geometry[0]
@@ -696,6 +762,8 @@ func _drag_to(cell: Vector2i):
 			_undo_stroke_step()
 			continue
 		var current = last_paint
+		history.watch(current)
+		history.watch(next)
 		var step = next - current
 		if tool == "erase":
 			_paint(next)
@@ -804,6 +872,7 @@ func _device_outputs_to(from: Vector2i, destination: Vector2i) -> bool:
 	return false
 
 func _snap_belt_to_input(cell: Vector2i):
+	history.watch(cell)
 	var e = sim.at(cell)
 	var candidates: Array = []
 	for facing in range(4):
@@ -815,10 +884,19 @@ func _snap_belt_to_input(cell: Vector2i):
 		sim.redirect_belt(cell, candidates[0])
 
 func _paint(cell: Vector2i, entry: int = -1, crossing: bool = false) -> bool:
+	history.attach(sim)
+	var own_action = tool != "select" and not history.active
+	if own_action: history.begin(sim, "拆除设备" if tool == "erase" else "建造设备")
+	if tool != "select": history.watch(cell)
 	last_paint = cell
 	if tool == "select":
 		if sim.accessible(cell):
 			selected = cell if not sim.at(cell).is_empty() else NONE_CELL
+			group_selection.clear()
+			var entity = sim.at(selected)
+			if not entity.is_empty() and entity.kind in BuildLayout.FIELDS:
+				group_selection.append(BuildLayout.identity(entity))
+				if not sim.at(entity.pos, 1).is_empty(): group_selection.append(FactorySim.key(entity.pos) + ":under")
 			_refresh_selection()
 	elif tool == "erase":
 		if sim.remove(cell):
@@ -835,7 +913,11 @@ func _paint(cell: Vector2i, entry: int = -1, crossing: bool = false) -> bool:
 			_refresh_selection()
 		else:
 			_toast("土地尚未开放" if not sim.accessible(cell) else "物流站额度不足或占地被占用" if tool == "logistics" else "此格已被占用，无法放置")
+			if own_action: history.commit()
 			return false
+	if own_action:
+		history.commit()
+		_refresh_edit_buttons()
 	return true
 
 func _set_tool(value: String):
@@ -844,20 +926,40 @@ func _set_tool(value: String):
 		return
 	tool = value
 	_end_stroke()
+	pasting = false
+	board.blueprint_nodes = []
+	box_armed = false
+	box_selecting = false
+	board.selection_area = Rect2i()
+	if value != "select": group_selection.clear()
 	for id in buttons:
 		buttons[id].set_pressed_no_signal(id == value)
 	_refresh_selection()
 
 func _rotate():
+	if pasting:
+		clipboard_nodes = BuildLayout.rotate(clipboard_nodes)
+		clipboard_revision += 1
+		paste_stamp = ""
+		_preview_paste(board.hover)
+		return
+	if tool == "select" and group_selection.size() > 1:
+		_toast("复制并粘贴后可整体旋转")
+		return
 	var e = sim.at(selected)
 	if tool == "select" and not e.is_empty() and e.kind in ["belt", "multiplier", "splitter"]:
 		if e.kind == "multiplier" and (e.inputs[0] != 0 or e.inputs[1] != 0):
 			_toast("待输入物料加工完成后可旋转")
 			return
 		if e.kind == "belt":
+			history.begin(sim, "旋转设备")
+			history.watch(selected)
 			if not sim.redirect_belt(selected, e.dir + 1): _toast("交叉位置不能转弯")
 		else:
+			history.begin(sim, "旋转设备")
+			history.watch(selected)
 			e.dir = (e.dir + 1) % 4
+		history.commit()
 	else:
 		direction = (direction + 1) % 4
 	_refresh_selection()
@@ -868,6 +970,132 @@ func _fit_map():
 	camera.zoom = Vector2.ONE * view_zoom
 	camera.position = Vector2.ZERO
 	_layout()
+
+func _select_box(area: Rect2i):
+	group_selection = BuildLayout.in_region(sim, area)
+	selected = sim.entities[group_selection[0]].pos if group_selection.size() == 1 else NONE_CELL
+	board.group_selection = group_selection
+	_refresh_selection()
+
+func _selected_ids() -> Array:
+	var ids = group_selection.filter(func(id): return sim.entities.has(id) and sim.entities[id].kind in BuildLayout.FIELDS)
+	if ids.is_empty():
+		var entity = sim.at(selected)
+		if not entity.is_empty() and entity.kind in BuildLayout.FIELDS:
+			ids.append(BuildLayout.identity(entity))
+			if not sim.at(entity.pos, 1).is_empty(): ids.append(FactorySim.key(entity.pos) + ":under")
+	return ids
+
+func _copy_selection():
+	_end_stroke()
+	var ids = _selected_ids()
+	if ids.is_empty():
+		_toast("未选中可复制的设备")
+		return
+	if ids.size() > BuildLayout.COPY_LIMIT:
+		_toast("每次最多复制 %d 个设备" % BuildLayout.COPY_LIMIT)
+		return
+	clipboard_nodes = BuildLayout.copy(sim, ids)
+	clipboard_revision += 1
+	_toast("已复制 %d 个设备" % clipboard_nodes.size())
+	_refresh()
+
+func _start_paste():
+	if clipboard_nodes.is_empty():
+		_toast("剪贴板中没有设备")
+		return
+	_set_tool("select")
+	group_selection.clear()
+	selected = NONE_CELL
+	pasting = true
+	paste_stamp = ""
+	_preview_paste(board.hover)
+	_refresh_selection()
+
+func _preview_paste(cell: Vector2i):
+	if not pasting or cell == NONE_CELL:
+		board.blueprint_nodes = []
+		return
+	var stamp = "%s:%d:%d:%d:%d:%d" % [FactorySim.key(cell), clipboard_revision, history.revision, sim.world.expansions, sim.world.logistics_capacity, sim.world.technologies.size()]
+	if stamp == paste_stamp: return
+	paste_stamp = stamp
+	paste_plan = BuildLayout.plan(sim, clipboard_nodes, cell)
+	board.blueprint_nodes = paste_plan.nodes
+	board.blueprint_valid = paste_plan.valid
+
+func _place_blueprint(cell: Vector2i) -> bool:
+	_end_stroke()
+	var plan = BuildLayout.plan(sim, clipboard_nodes, cell)
+	if not plan.valid:
+		_toast(plan.reason)
+		paste_stamp = ""
+		_preview_paste(cell)
+		return false
+	history.begin(sim, "粘贴蓝图")
+	for node in plan.nodes: history.watch(node.pos)
+	var reason = BuildLayout.apply(sim, plan.before, plan.after)
+	history.commit()
+	if not reason.is_empty():
+		_toast(reason)
+		return false
+	group_selection = plan.after.keys()
+	selected = plan.nodes[0].pos if plan.nodes.size() == 1 else NONE_CELL
+	paste_stamp = ""
+	_preview_paste(cell)
+	_refresh_selection()
+	_toast("已粘贴 %d 个设备" % plan.nodes.size())
+	return true
+
+func _delete_selection():
+	_end_stroke()
+	var ids = _selected_ids()
+	if ids.is_empty():
+		_toast("未选中可拆除的设备")
+		return
+	history.begin(sim, "拆除设备")
+	for id in ids:
+		var e = sim.entities.get(id, {})
+		if e.is_empty(): continue
+		history.watch(e.pos)
+		if e.layer == 1: sim.remove_underground(e.pos)
+		else: sim.remove(e.pos)
+	history.commit()
+	group_selection.clear()
+	selected = NONE_CELL
+	_refresh_selection()
+
+func _history_action(redo: bool):
+	history.attach(sim)
+	_end_stroke()
+	box_armed = false
+	box_selecting = false
+	board.selection_area = Rect2i()
+	var reason = history.redo() if redo else history.undo()
+	group_selection.clear()
+	selected = NONE_CELL
+	paste_stamp = ""
+	_refresh_selection()
+	_toast(reason if not reason.is_empty() else "已重做建造" if redo else "已撤销建造")
+
+func _edit_setting(field: String, value: int, index: int = -1):
+	_end_stroke()
+	history.begin(sim, "修改设备配置")
+	history.watch(selected)
+	var e = sim.at(selected)
+	if index >= 0: e[field][index] = value
+	else: e[field] = value
+	history.commit()
+	_refresh()
+
+func _refresh_edit_buttons():
+	if edit_buttons.is_empty(): return
+	for button in rotation_buttons:
+		button.disabled = tool == "select" and group_selection.size() > 1 and not pasting
+		button.tooltip_text = "复制并粘贴后可整体旋转 · Ctrl+C / Ctrl+V" if button.disabled else "顺时针旋转 · R"
+	edit_buttons.copy.disabled = _selected_ids().is_empty()
+	edit_buttons.paste.disabled = clipboard_nodes.is_empty()
+	edit_buttons.undo.disabled = history.undo_stack.is_empty()
+	edit_buttons.redo.disabled = history.redo_stack.is_empty()
 
 func _refresh_selection():
 	var e = sim.at(selected)
@@ -888,6 +1116,10 @@ func _refresh_selection():
 func _refresh():
 	if root == null:
 		return
+	history.attach(sim)
+	group_selection = group_selection.filter(func(id): return sim.entities.has(id))
+	board.group_selection = group_selection
+	_refresh_edit_buttons()
 	var w = sim.world
 	expansion_label.text = "%d × %d → %d × %d\n第 %d 圈\n%s" % [w.half_size() * 2, w.half_size() * 2, w.half_size() * 2 + 16, w.half_size() * 2 + 16, w.expansions + 1, _cost_text(w.expansion_cost)]
 	var resource_lines = PackedStringArray()
@@ -921,6 +1153,9 @@ func _refresh():
 	complete_label.text = "存档异常 · 已禁止覆盖" if save_blocked else "已暂停" if paused else ""
 	if toast_time == 0:
 		status_label.text = "第 %d 圈   ·   %d 个已生成区块   ·   %s" % [w.expansions, sim.loaded_chunks.size(), "已暂停" if paused else "运行中"]
+		if pasting:
+			var shape = BuildLayout.bounds(clipboard_nodes).size
+			status_label.text = "蓝图   ·   %d 个设备   ·   %d × %d   ·   %s" % [clipboard_nodes.size(), shape.x, shape.y, "可放置" if paste_plan.get("valid", false) else paste_plan.get("reason", "")]
 	var e = sim.at(selected)
 	var diagnostics = FlowDiagnostics.new(sim)
 	board.problem_ports = []
@@ -944,6 +1179,20 @@ func _refresh():
 			port.selector.disabled = e.mode != 2 or not sim.splitter_unlocked(2) or facing not in ports.outputs
 			port.number.editable = not port.selector.disabled and port.selector.selected == 1
 	if e.is_empty():
+		if pasting or group_selection.size() > 1:
+			var nodes = clipboard_nodes if pasting else group_selection.map(func(id): return sim.entities[id])
+			inspector_title.text = "蓝图" if pasting else "已选 %d 个设备" % group_selection.size()
+			var shape = BuildLayout.bounds(nodes).size
+			inspector_status.text = "%d × %d · %d 个设备" % [shape.x, shape.y, nodes.size()]
+			if pasting and not paste_plan.get("valid", false): inspector_status.text += "\n" + paste_plan.get("reason", "")
+			var counts: Dictionary = {}
+			for node in nodes:
+				var kind = node.kind
+				counts[kind] = int(counts.get(kind, 0)) + 1
+			var lines = PackedStringArray()
+			for kind in counts: lines.append("%s  %d" % [TITLES[kind], counts[kind]])
+			inspector_detail.text = "\n".join(lines)
+			return
 		inspector_title.text = "建造乘法机" if tool == "multiplier" else "设备"
 		inspector_status.text = "未选择设备" if tool == "select" else "方向 · " + ["东", "南", "西", "北"][direction]
 		inspector_detail.text = ""
@@ -1062,8 +1311,7 @@ func _set_splitter_mode(index: int):
 	var e = sim.at(selected)
 	if not e.is_empty() and e.kind == "splitter":
 		if sim.splitter_unlocked(index):
-			e.mode = index
-			_refresh()
+			_edit_setting("mode", index)
 
 func _toast(message: String):
 	status_label.text = message

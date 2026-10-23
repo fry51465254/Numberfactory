@@ -24,6 +24,10 @@ var tool = "select"
 var direction = 0
 var problem_cell = Vector2i(-1000000000, -1000000000)
 var problem_ports: Array = []
+var group_selection: Array = []
+var selection_area = Rect2i()
+var blueprint_nodes: Array = []
+var blueprint_valid = false
 var font: Font
 var pulse = 0.0
 
@@ -90,6 +94,7 @@ func _draw():
 		if e.layer == 0: _draw_entity(e)
 	for e in sim.entities.values():
 		if e.layer == 1: _draw_tunnel_ports(e)
+	_draw_build_overlay(Rect2i(0, 0, FactorySim.WIDTH, FactorySim.HEIGHT))
 	if not sim.unlocked():
 		var region = Rect2(20 * TILE, 0, 12 * TILE, 24 * TILE)
 		draw_rect(region, Color(0.16, 0.21, 0.22, 0.87))
@@ -156,6 +161,7 @@ func _draw_world():
 			var pos = (Vector2(e.pos) + Vector2.ONE * 0.5) * TILE + Vector2(FactorySim.DIRS[facing]) * 17
 			draw_circle(pos, 6, Color("f4c34f"))
 			_center_text(pos, "!", 11, Color("493b1c"))
+	_draw_build_overlay(area)
 	if problem_cell != Vector2i(-1000000000, -1000000000):
 		var culprit = sim.entities.get(sim.occupancy.get(FactorySim.key(problem_cell), ""), {})
 		var size = 2 if not culprit.is_empty() and culprit.kind in ["source", "research", "logistics"] else 1
@@ -174,7 +180,34 @@ func _draw_world():
 			draw_line(r.get_center() - Vector2(5, -5), r.get_center() + Vector2(5, -5), color, 2)
 		elif tool != "erase": _arrow(r.get_center(), direction, color)
 
-func _draw_entity(e: Dictionary):
+func _draw_build_overlay(area: Rect2i):
+	var outlined: Dictionary = {}
+	for id in group_selection:
+		var e = sim.entities.get(id, {})
+		if e.is_empty() or outlined.has(FactorySim.key(e.pos)): continue
+		outlined[FactorySim.key(e.pos)] = true
+		var size = 2 if e.kind == "logistics" else 1
+		draw_rect(Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size).grow(1), Color("159486"), false, 1.5)
+	if selection_area.has_area():
+		var box = Rect2(Vector2(selection_area.position) * TILE, Vector2(selection_area.size) * TILE)
+		draw_rect(box, Color(0.08, 0.6, 0.55, 0.08))
+		draw_rect(box, Color("159486"), false, 1.5)
+	var color = Color("159486") if blueprint_valid else Color("e76863")
+	for node in blueprint_nodes:
+		if not area.grow(2).has_point(node.pos): continue
+		var size = 2 if node.kind == "logistics" else 1
+		var rect = Rect2(Vector2(node.pos) * TILE, Vector2.ONE * TILE * size)
+		draw_rect(rect, Color(color, 0.1))
+		_draw_body(node, Color(1, 1, 1, 0.45))
+		draw_rect(rect.grow(-1), color, false, 1.3)
+		if node.kind == "belt":
+			_arrow(rect.get_center(), node.dir, color)
+		elif node.kind == "multiplier":
+			_center_text(rect.get_center(), "×", 16, color)
+		elif node.kind == "logistics":
+			_center_text(rect.get_center(), "仓", 24, color)
+
+func _draw_body(e: Dictionary, tint: Color = Color.WHITE):
 	var big = e.kind in ["source", "research", "exploration", "hub", "logistics"]
 	var size = 2 if big else 1
 	var r = Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size)
@@ -190,15 +223,22 @@ func _draw_entity(e: Dictionary):
 		draw_set_transform(center, angle if not big else 0.0, Vector2(1, -1) if flip else Vector2.ONE)
 		var tex_rect = Rect2(-r.size / 2, r.size)
 		if name == "belt_turn":
-			draw_mesh(turn_mesh, textures[name])
+			draw_mesh(turn_mesh, textures[name], Transform2D.IDENTITY, tint)
 		elif device_meshes.has(name):
-			draw_mesh(device_meshes[name], textures[name])
+			draw_mesh(device_meshes[name], textures[name], Transform2D.IDENTITY, tint)
 		else:
-			draw_texture_rect(textures[name], tex_rect, false)
+			draw_texture_rect(textures[name], tex_rect, false, tint)
 		draw_set_transform(Vector2.ZERO)
 	else:
-		draw_rect(r.grow(-3), Color("d3dad8") if e.kind == "belt" else Color("f9faf9"))
-		draw_rect(r.grow(-3), Color("82938e"), false, 2)
+		draw_rect(r.grow(-3), (Color("d3dad8") if e.kind == "belt" else Color("f9faf9")) * tint)
+		draw_rect(r.grow(-3), Color("82938e") * tint, false, 2)
+
+func _draw_entity(e: Dictionary):
+	var big = e.kind in ["source", "research", "exploration", "hub", "logistics"]
+	var size = 2 if big else 1
+	var r = Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size)
+	var center = r.get_center()
+	_draw_body(e)
 	if e.kind == "source":
 		var color = COLORS.get(e.value, Color("d5ad35"))
 		draw_circle(center, 19, Color("f5faf8"))
