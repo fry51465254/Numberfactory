@@ -76,7 +76,9 @@ python .\tools\serve_web.py --port 8765
 
 ## 素材与许可
 
-沿用 GPT 生成的抽象数学实验室 PNG，提示词与清单见 `assets/texture_manifest.json`。弯带使用网格校准后的 `belt_turn-v2.png`，四向分流使用 `splitter-fourway.png`，物流站暂复用枢纽贴图并实时绘制端口与“仓”标记。数字、方向与状态不烘焙进贴图。
+使用内置 GPT 图像生成的抽象数学实验室 PNG，完整提示词、迭代与素材清单见 `assets/texture_manifest.json`。乘法机使用 `multiplier-adaptive.png`，分流器使用 `splitter-adaptive.png`，四侧均为相同的中性接口；矿点使用 `source-eightway.png`，共享物流站独立使用 `logistics-eightway.png`，各有八个中性接口。数字、乘号、“仓”标记、输入输出方向、选择框和状态由引擎绘制。
+
+原始生成 PNG 保留完整分辨率和真实透明背景，Godot 使用 mipmap 缩小到 40×40 / 80×80；UV 网格将接口中心与轨道宽度精确映射到实际传送带格子。弯带继续使用已校准的 `belt_turn-v2.png`，旧版本贴图保留用于溯源。
 
 中文使用随游戏打包的 [Noto CJK 固定字重字体](https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/SimplifiedChinese)，不依赖本机字体。字体采用 SIL OFL，工具栏采用 Lucide，许可分别在 `assets/fonts/OFL.txt` 和 `assets/icons/LICENSE`。导出脚本把字体、图标以及当前引擎的许可与第三方声明复制到 `build/web/licenses/`。
 

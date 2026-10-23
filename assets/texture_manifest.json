@@ -24,9 +24,24 @@
       "render_alignment": {
         "method": "3x3 UV-anchored mesh in board_view.gd",
         "source_pixels": 1254,
-        "source_x": [0, 618, 754, 1254],
-        "source_y": [0, 522, 649, 1254],
-        "destination_tile_fraction": [0, 0.42, 0.58, 1],
+        "source_x": [
+          0,
+          618,
+          754,
+          1254
+        ],
+        "source_y": [
+          0,
+          522,
+          649,
+          1254
+        ],
+        "destination_tile_fraction": [
+          0,
+          0.42,
+          0.58,
+          1
+        ],
         "ports": "north midpoint to east midpoint; mirrored and rotated in engine"
       },
       "tool": "built-in image_gen",
@@ -36,28 +51,122 @@
     },
     {
       "name": "source",
-      "path": "res://assets/textures/source.png",
+      "path": "res://assets/textures/source-eightway.png",
       "tool": "built-in image_gen",
       "transparent": true,
       "display_pixels": 80,
-      "prompt": "Use case: stylized-concept. Asset type: production-ready single sprite for 2D top-down abstract mathematical laboratory factory. Image 1 is STYLE REFERENCE ONLY; create a different asset. Match white ceramic and graphite outlines, clean polished illustrated broad geometric shapes, neutral lighting, restrained teal/coral/yellow accents. ONE square large prime-source instrument, circular teal crystal reservoir nested in white octagonal base, two ports on east edge. Leave a clean broad central disc for a numeric label added in engine. Strict flat overhead. Genuine transparent background. Entire asset centered and filling canvas, crisp readable at 40 or 80 pixels, no numbers, text, branding or watermark; no cast shadows, no perspective, no fine noisy details. Do not copy reference machine geometry."
+      "prompt": "Use case: stylized-concept. Asset type: ONE large prime ore source base sprite for an abstract mathematical factory, occupying a 2x2 cell square, displayed at 80x80 pixels. Image 1 is the NEW MULTIPLIER material/style reference only; image 2 is the OLD ORE SOURCE whose asymmetric right-only pipes must be replaced. Redraw as a low-profile white ceramic and cool graphite OCTAGONAL reservoir within a square footprint, strictly orthographic directly overhead. FOUR sides have TWO identical flat passive conveyor docks EACH, EIGHT docks in total. Dock centers at x=25% and x=75% on TOP and BOTTOM, y=25% and y=75% on LEFT and RIGHT of the SQUARE canvas. Every dock is neutral graphite track with thin white rails, no end caps or pipe mouths, open facing the corresponding outer square edge. Each dark track width about 8% of the canvas (one-half the 40px machine socket width in the reference), all docks have identical geometry, four-fold rotational symmetry. Docks extend near 97% of canvas span; do not clip. The octagonal main body has a broad quiet pale CIRCULAR center at exact canvas center, diameter about 48% of canvas, entirely blank for a numeric ore label drawn by the engine; one graphite rim with minimal neutral white-grey mechanical details around it, NOT a teal-colored ore reservoir because different prime colors are dynamic. Distinct octagonal silhouette; square footprint; calm low-detail polished illustrated laboratory art matching image 1, broad contours readable at 80px, equal margins, diffuse neutral light. Genuine transparent RGBA background, complete single centered object. No text, digits, symbols, arrows, colored ore, colored status lamps, designated output directions, asymmetric east pipes, perspective, visible side walls, ground, cast shadows, background pattern, watermark or sprite sheet.",
+      "previous_asset": "res://assets/textures/source.png",
+      "generated_on": "2026-10-23",
+      "reference_assets": [
+        "res://assets/textures/multiplier-adaptive.png",
+        "res://assets/textures/source.png"
+      ],
+      "refinement_prompt": "Use case: precise-object-edit. Asset type: game sprite geometry correction. Edit ONLY the placement of the EIGHT perimeter conveyor sockets in image 1. Preserve its white ceramic/graphite octagonal reservoir, broad blank round center, material style, full eight-way layout, flat overhead view, genuine transparent alpha and overall square framing. Critical correction: its current paired sockets are too close to the center, approximately at 38% and 62%. MOVE EACH PAIR APART along its side until their track centerlines are EXACTLY at 25% and 75% of the FULL SQUARE IMAGE. TOP and BOTTOM: left track center x=25%, right track center x=75%. LEFT and RIGHT: upper track center y=25%, lower track center y=75%. This is necessary to connect to two separate grid tiles across a 2x2 game footprint. Do not leave them at 38/62 or 33/67. Keep each individual dark track width 8% of canvas, do not widen it. Top/bottom sockets extend vertically to near canvas edges; left/right extend horizontally. Move/rearrange corner braces locally as needed to make room at the quarter positions. All eight flat open dock heads identical, four-fold symmetry, zero pipe mouths or side faces. Central circle stays exactly centered and blank. No text, numbers, arrows, symbols, status lights, perspective, ground, shadows, watermark or second object. One complete centered transparent sprite.",
+      "render_alignment": {
+        "method": "UV-anchored grid mesh in board_view.gd; original PNG preserved",
+        "source_pixels": 1254,
+        "source_x": [
+          0,
+          386,
+          483,
+          770,
+          868,
+          1254
+        ],
+        "source_y": [
+          0,
+          374,
+          471,
+          780,
+          876,
+          1254
+        ],
+        "destination_tile_fraction": [
+          0,
+          0.21,
+          0.29,
+          0.71,
+          0.79,
+          1
+        ],
+        "ports": "eight identical sockets, two per edge at quarter and three-quarter positions",
+        "track_width_pixels": 6.4
+      }
     },
     {
       "name": "multiplier",
-      "path": "res://assets/textures/multiplier.png",
+      "path": "res://assets/textures/multiplier-adaptive.png",
       "tool": "built-in image_gen",
       "transparent": true,
       "display_pixels": 40,
-      "prompt": "Use case: stylized-concept. Asset type: single game sprite for a top-down 2D mathematical factory. Draw ONE multiplication machine: an orthographic STRICT overhead square compact abstract mathematics laboratory instrument, white ceramic housing with graphite frame, a restrained teal inset double-chamber mechanism connecting to a single chamber, geometric circles and channels. Inputs located west and north; output east. Entire object centered filling 90% of square canvas, crisp silhouette and broad shapes readable at 40 pixels. Flat diffuse ambient lighting, no perspective, no cast shadow, no lettering, no numerals, no arrows, no symbols, no border around image, no ground. Genuine transparent background. Polished illustrated game art, no photorealism, no fine noisy details."
+      "prompt": "Use case: stylized-concept. Asset type: ONE production game sprite, multiplication machine for a 2D abstract mathematics factory, displayed at 40x40 pixels. Input image 1 is STYLE AND MATERIAL REFERENCE ONLY, NOT a layout to preserve. Redraw the machine from scratch for automatic bidirectional connections. Strict orthographic directly overhead, completely flat top view, absolutely no visible pipe mouths or side faces. ONE compact chamfered SQUARE white ceramic and graphite laboratory instrument, four-fold rotationally symmetric. Four IDENTICAL passive flat grey conveyor sockets at precisely the north/east/south/west edge MIDPOINTS, all the same size and shape. Each socket open at its outer end, no end cap, its dark straight channel about 16 percent of canvas width; thin white side rails. Sockets reach 96 percent of overall canvas span, housing fills about 84 percent. Central geometric teal square-ring mechanism with a broad QUIET EMPTY pale central square (about 45 percent of canvas) reserved for a game-rendered multiplication mark or item label. Four matching diagonal graphite corner braces. Thick clean outlines, broad simple shapes, restrained teal accents, white and cool graphite, polished illustrated game art matching the reference. Distinct readable square silhouette at 40 pixels; simplify the old tiny mechanical details. Uniform diffuse ambient lighting and subtle material bevels only. Genuine transparent RGBA background, fully centered and complete, equal small margins all sides. No ground, no shadow, no perspective, no text, numbers, symbols, arrows, lamps, directional markings, unequal ports, dedicated input/output pipes, gradients in the background, frame or watermark. Do NOT reproduce the old asymmetric chambers or pipes. ONE asset, not a sprite sheet.",
+      "previous_asset": "res://assets/textures/multiplier.png",
+      "generated_on": "2026-10-23",
+      "reference_assets": [
+        "res://assets/textures/multiplier.png"
+      ],
+      "render_alignment": {
+        "method": "UV-anchored grid mesh in board_view.gd; original PNG preserved",
+        "source_pixels": 1254,
+        "source_x": [
+          0,
+          564,
+          689,
+          1254
+        ],
+        "source_y": [
+          0,
+          566,
+          685,
+          1254
+        ],
+        "destination_tile_fraction": [
+          0,
+          0.42,
+          0.58,
+          1
+        ],
+        "ports": "four identical sockets at edge midpoints",
+        "track_width_pixels": 6.4
+      }
     },
     {
       "name": "splitter",
-      "path": "res://assets/textures/splitter-fourway.png",
-      "previous_asset": "res://assets/textures/splitter.png",
+      "path": "res://assets/textures/splitter-adaptive.png",
+      "previous_asset": "res://assets/textures/splitter-fourway.png",
       "tool": "built-in image_gen",
       "transparent": true,
       "display_pixels": 40,
-      "prompt": "Use case: precise game sprite edit. Edit the reference factory splitter instrument to be FOUR-WAY SYMMETRIC instead of three-way. Match its white ceramic housing, graphite outlines, restrained teal channels and yellow center. Strict orthographic overhead top view, NO perspective or cylindrical pipe mouths. Compact square lab instrument with four identical FLAT open conveyor sockets exactly at the north/south/east/west edge midpoints, joined by a symmetric plus-shaped graphite channel around a small yellow circular central mechanism. All four sockets look identical; no baked input/output direction. Centered and filling 90% of square, complete silhouette, thick simple contours readable at 40x40 pixels. Real transparent background. No arrows, symbols, text, numbers, shadows, floor, frame or watermark. Keep same palette and materials. ONE sprite."
+      "prompt": "Use case: stylized-concept. Asset type: ONE production-ready 2D game sprite, four-way automatic splitter, displayed at 40x40 pixels. Input image 1 is the NEW MULTIPLIER STYLE REFERENCE ONLY: match its white ceramic, cool graphite, simple broad shapes, neutral diffuse lighting, flat overhead viewpoint and uniform margins. Create a DIFFERENT instrument with a distinctive compact PLUS-shaped silhouette and a small recessed yellow central circular distributor; do not copy its square-ring core. Four identical passive flat grey conveyor sockets centered exactly on NORTH/EAST/SOUTH/WEST edge midpoints, all look the same and none implies input or output. Sockets have open outer ends, thin white rails and a graphite slatted track about 16 percent of image width. Full four-way 90-degree rotational geometric symmetry, centered, each socket reaches about 96 percent canvas span. Short graphite channels converge into a compact pale central circular recess with restrained yellow ring, the center quiet and empty for an engine-rendered item. Avoid large colored status-like blocks at the ports; socket material is neutral graphite. Very readable at 40 pixels, low detail, chunky clean outlines, same polished illustrated laboratory game style. Strict orthographic TOP view with NO visible side faces or pipe mouths. Genuine transparent RGBA background. One complete object with equal small transparent margins. No text, numerals, symbols, arrows, status lamps, input/output differences, perspective, ground, cast shadow, border or watermark. Not a sprite sheet.",
+      "generated_on": "2026-10-23",
+      "reference_assets": [
+        "res://assets/textures/multiplier-adaptive.png"
+      ],
+      "render_alignment": {
+        "method": "UV-anchored grid mesh in board_view.gd; original PNG preserved",
+        "source_pixels": 1254,
+        "source_x": [
+          0,
+          565.5,
+          687,
+          1254
+        ],
+        "source_y": [
+          0,
+          565,
+          680,
+          1254
+        ],
+        "destination_tile_fraction": [
+          0,
+          0.42,
+          0.58,
+          1
+        ],
+        "ports": "four identical sockets at edge midpoints",
+        "track_width_pixels": 6.4
+      }
     },
     {
       "name": "research",
@@ -82,6 +191,49 @@
       "transparent": true,
       "display_pixels": 80,
       "prompt": "Use case: stylized-concept. Asset type: production-ready single sprite for 2D top-down abstract mathematical laboratory factory. Image 1 is STYLE REFERENCE ONLY; create a different asset. Match white ceramic and graphite outlines, clean polished illustrated broad geometric shapes, neutral lighting, restrained teal/coral/yellow accents. ONE square large central mathematics instrument, distinctive yellow hexagonal concentric geometry in white square base, graphite accents and spacious center. Strict flat overhead. Genuine transparent background. Entire asset centered and filling canvas, crisp readable at 40 or 80 pixels, no numbers, text, branding or watermark; no cast shadows, no perspective, no fine noisy details. Do not copy reference machine geometry."
+    },
+    {
+      "name": "logistics",
+      "path": "res://assets/textures/logistics-eightway.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 80,
+      "generated_on": "2026-10-23",
+      "reference_assets": [
+        "res://assets/textures/multiplier-adaptive.png"
+      ],
+      "prompt": "Use case: stylized-concept. Asset type: ONE shared logistics warehouse game sprite for a 2D mathematical laboratory factory, 2x2 grid footprint, displayed at 80x80 pixels. Image 1 is material/style reference only (the new multiplier). Design a DISTINCT SQUARE STORAGE INSTRUMENT, compact chamfered white ceramic box frame with two nested SQUARE graphite rims, a restrained amber-yellow square inset ring and a large blank quiet pale square central lid reserved for a game-rendered warehouse label. NOT a round reservoir, NOT a hexagon or central hub, no crystal. Four-fold geometric symmetry. EXACTLY EIGHT IDENTICAL flat passive conveyor sockets, TWO on each of the north/south/east/west sides. Canvas coordinate layout: top sockets at (25%,5%) and (75%,5%), bottom at (25%,95%) and (75%,95%), left at (5%,25%) and (5%,75%), right at (95%,25%) and (95%,75%). Spread each pair widely across its side; do not bunch them near the center. Dark track width about 8% of the square canvas per socket, thin white rails and neutral graphite slats, open at the outer canvas edge, no endcaps, arrows or pipe mouths. All sockets identical, no baked input or output role. Broad simple geometric shapes, thick graphite outlines, polished illustrated game art matching image 1; uniform diffuse neutral lighting, STRICT orthographic directly overhead flat view with no visible side walls or perspective. Complete centered object fills 94% of square canvas, equal small margins, genuinely transparent RGBA background. No text, numerals, glyphs, emblems, arrows, status lights, direction colors, ground, cast shadow, border, watermark or sprite sheet.",
+      "render_alignment": {
+        "method": "UV-anchored grid mesh in board_view.gd; original PNG preserved",
+        "source_pixels": 1254,
+        "source_x": [
+          0,
+          422.5,
+          502.5,
+          751,
+          830.5,
+          1254
+        ],
+        "source_y": [
+          0,
+          426.5,
+          504.5,
+          746,
+          825.5,
+          1254
+        ],
+        "destination_tile_fraction": [
+          0,
+          0.21,
+          0.29,
+          0.71,
+          0.79,
+          1
+        ],
+        "ports": "eight identical sockets, two per edge at quarter and three-quarter positions",
+        "track_width_pixels": 6.4
+      }
     }
-  ]
+  ],
+  "dynamic_information": "Numbers, multiplication mark, warehouse label, flow arrows, input/output roles, selection, warning marks and status are drawn in Godot, not baked into these sprites."
 }

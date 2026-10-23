@@ -7,10 +7,17 @@ const COLORS = {2: Color("16a59a"), 3: Color("e76863"), 5: Color("d5ad35")}
 const TURN_SOURCE_X = [0.0, 618.0 / 1254.0, 754.0 / 1254.0, 1.0]
 const TURN_SOURCE_Y = [0.0, 522.0 / 1254.0, 649.0 / 1254.0, 1.0]
 const TURN_DEST = [-0.5, -0.08, 0.08, 0.5]
-const TEXTURE_FILES = {"belt_turn": "belt_turn-v2", "splitter": "splitter-fourway"}
+const TEXTURE_FILES = {"belt_turn": "belt_turn-v2", "multiplier": "multiplier-adaptive", "splitter": "splitter-adaptive", "source": "source-eightway", "logistics": "logistics-eightway"}
+const DEVICE_UV = {
+	"multiplier": {"x": [0.0, 564.0 / 1254, 689.0 / 1254, 1.0], "y": [0.0, 566.0 / 1254, 685.0 / 1254, 1.0], "dest": [-0.5, -0.08, 0.08, 0.5], "size": 1},
+	"splitter": {"x": [0.0, 565.5 / 1254, 687.0 / 1254, 1.0], "y": [0.0, 565.0 / 1254, 680.0 / 1254, 1.0], "dest": [-0.5, -0.08, 0.08, 0.5], "size": 1},
+	"source": {"x": [0.0, 386.0 / 1254, 483.0 / 1254, 770.0 / 1254, 868.0 / 1254, 1.0], "y": [0.0, 374.0 / 1254, 471.0 / 1254, 780.0 / 1254, 876.0 / 1254, 1.0], "dest": [-0.5, -0.29, -0.21, 0.21, 0.29, 0.5], "size": 2},
+	"logistics": {"x": [0.0, 422.5 / 1254, 502.5 / 1254, 751.0 / 1254, 830.5 / 1254, 1.0], "y": [0.0, 426.5 / 1254, 504.5 / 1254, 746.0 / 1254, 825.5 / 1254, 1.0], "dest": [-0.5, -0.29, -0.21, 0.21, 0.29, 0.5], "size": 2}
+}
 var sim: FactorySim
 var textures: Dictionary = {}
 var turn_mesh: ArrayMesh
+var device_meshes: Dictionary = {}
 var selected = Vector2i(-1000000000, -1000000000)
 var hover = Vector2i(-1000000000, -1000000000)
 var tool = "select"
@@ -23,24 +30,31 @@ var pulse = 0.0
 func _ready():
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	font = load("res://assets/fonts/interface.tres")
-	for name in ["floor", "belt", "belt_turn", "source", "multiplier", "splitter", "research", "exploration", "hub"]:
+	for name in ["floor", "belt", "belt_turn", "source", "multiplier", "splitter", "research", "exploration", "hub", "logistics"]:
 		var path = "res://assets/textures/%s.png" % TEXTURE_FILES.get(name, name)
 		if ResourceLoader.exists(path):
 			textures[name] = load(path)
 	turn_mesh = _make_turn_mesh()
+	for name in DEVICE_UV:
+		var spec = DEVICE_UV[name]
+		device_meshes[name] = _make_sprite_mesh(spec.x, spec.y, spec.dest, TILE * spec.size)
 
 func _make_turn_mesh() -> ArrayMesh:
+	return _make_sprite_mesh(TURN_SOURCE_X, TURN_SOURCE_Y, TURN_DEST, TILE)
+
+func _make_sprite_mesh(source_x: Array, source_y: Array, destination: Array, extent: float) -> ArrayMesh:
 	var vertices = PackedVector3Array()
 	var uvs = PackedVector2Array()
 	var indices = PackedInt32Array()
-	for y in range(4):
-		for x in range(4):
-			vertices.append(Vector3(TURN_DEST[x] * TILE, TURN_DEST[y] * TILE, 0))
-			uvs.append(Vector2(TURN_SOURCE_X[x], TURN_SOURCE_Y[y]))
-	for y in range(3):
-		for x in range(3):
-			var i = y * 4 + x
-			indices.append_array(PackedInt32Array([i, i + 1, i + 4, i + 1, i + 5, i + 4]))
+	var columns = source_x.size()
+	for y in range(source_y.size()):
+		for x in range(columns):
+			vertices.append(Vector3(destination[x] * extent, destination[y] * extent, 0))
+			uvs.append(Vector2(source_x[x], source_y[y]))
+	for y in range(source_y.size() - 1):
+		for x in range(columns - 1):
+			var i = y * columns + x
+			indices.append_array(PackedInt32Array([i, i + 1, i + columns, i + 1, i + columns + 1, i + columns]))
 	var arrays = []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
@@ -165,8 +179,8 @@ func _draw_entity(e: Dictionary):
 	var size = 2 if big else 1
 	var r = Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size)
 	var center = r.get_center()
-	var name = "hub" if e.kind == "logistics" else e.kind
-	var angle = 0.0 if e.kind == "splitter" else float(e.dir) * PI / 2.0
+	var name = e.kind
+	var angle = 0.0 if e.kind in ["splitter", "multiplier"] else float(e.dir) * PI / 2.0
 	if e.kind == "belt" and e.entry >= 0 and e.entry != (e.dir + 2) % 4:
 		name = "belt_turn"
 		# The elbow texture's default input is north and output east.
@@ -177,6 +191,8 @@ func _draw_entity(e: Dictionary):
 		var tex_rect = Rect2(-r.size / 2, r.size)
 		if name == "belt_turn":
 			draw_mesh(turn_mesh, textures[name])
+		elif device_meshes.has(name):
+			draw_mesh(device_meshes[name], textures[name])
 		else:
 			draw_texture_rect(textures[name], tex_rect, false)
 		draw_set_transform(Vector2.ZERO)

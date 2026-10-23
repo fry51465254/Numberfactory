@@ -173,7 +173,7 @@ func _test_assets():
 	verify(font.base_font is FontFile and not font.base_font.allow_system_fallback, "Chinese font is bundled without system fallback")
 	for character in "质数研究扩张物流库存暂停":
 		verify(font.has_char(character.unicode_at(0)), "Bundled font contains %s" % character)
-	for name in ["floor", "belt", "belt_turn", "source", "multiplier", "splitter", "research", "exploration", "hub"]:
+	for name in ["floor", "belt", "belt_turn", "source", "multiplier", "splitter", "research", "exploration", "hub", "logistics"]:
 		var path = "res://assets/textures/%s.png" % BoardView.TEXTURE_FILES.get(name, name)
 		verify(ResourceLoader.exists(path), "Texture available: %s" % name)
 		if not ResourceLoader.exists(path): continue
