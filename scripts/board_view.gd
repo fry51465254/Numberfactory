@@ -7,12 +7,13 @@ const COLORS = {2: Color("16a59a"), 3: Color("e76863"), 5: Color("d5ad35")}
 const TURN_SOURCE_X = [0.0, 618.0 / 1254.0, 754.0 / 1254.0, 1.0]
 const TURN_SOURCE_Y = [0.0, 522.0 / 1254.0, 649.0 / 1254.0, 1.0]
 const TURN_DEST = [-0.5, -0.08, 0.08, 0.5]
-const TEXTURE_FILES = {"belt_turn": "belt_turn-v2", "multiplier": "multiplier-adaptive", "splitter": "splitter-adaptive", "source": "source-eightway", "logistics": "logistics-eightway"}
+const TEXTURE_FILES = {"belt_turn": "belt_turn-v2", "multiplier": "multiplier-adaptive", "splitter": "splitter-adaptive", "source": "source-eightway", "logistics": "logistics-eightway", "stellar": "stellar-eightway"}
 const DEVICE_UV = {
 	"multiplier": {"x": [0.0, 564.0 / 1254, 689.0 / 1254, 1.0], "y": [0.0, 566.0 / 1254, 685.0 / 1254, 1.0], "dest": [-0.5, -0.08, 0.08, 0.5], "size": 1},
 	"splitter": {"x": [0.0, 565.5 / 1254, 687.0 / 1254, 1.0], "y": [0.0, 565.0 / 1254, 680.0 / 1254, 1.0], "dest": [-0.5, -0.08, 0.08, 0.5], "size": 1},
 	"source": {"x": [0.0, 386.0 / 1254, 483.0 / 1254, 770.0 / 1254, 868.0 / 1254, 1.0], "y": [0.0, 374.0 / 1254, 471.0 / 1254, 780.0 / 1254, 876.0 / 1254, 1.0], "dest": [-0.5, -0.29, -0.21, 0.21, 0.29, 0.5], "size": 2},
-	"logistics": {"x": [0.0, 422.5 / 1254, 502.5 / 1254, 751.0 / 1254, 830.5 / 1254, 1.0], "y": [0.0, 426.5 / 1254, 504.5 / 1254, 746.0 / 1254, 825.5 / 1254, 1.0], "dest": [-0.5, -0.29, -0.21, 0.21, 0.29, 0.5], "size": 2}
+	"logistics": {"x": [0.0, 422.5 / 1254, 502.5 / 1254, 751.0 / 1254, 830.5 / 1254, 1.0], "y": [0.0, 426.5 / 1254, 504.5 / 1254, 746.0 / 1254, 825.5 / 1254, 1.0], "dest": [-0.5, -0.29, -0.21, 0.21, 0.29, 0.5], "size": 2},
+	"stellar": {"x": [0.0, 422.5 / 1254, 502.5 / 1254, 751.0 / 1254, 830.5 / 1254, 1.0], "y": [0.0, 426.5 / 1254, 504.5 / 1254, 746.0 / 1254, 825.5 / 1254, 1.0], "dest": [-0.5, -0.29, -0.21, 0.21, 0.29, 0.5], "size": 2}
 }
 var sim: FactorySim
 var textures: Dictionary = {}
@@ -34,7 +35,7 @@ var pulse = 0.0
 func _ready():
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	font = load("res://assets/fonts/interface.tres")
-	for name in ["floor", "belt", "belt_turn", "source", "multiplier", "splitter", "research", "exploration", "hub", "logistics"]:
+	for name in ["floor", "belt", "belt_turn", "source", "multiplier", "splitter", "research", "exploration", "hub", "logistics", "stellar"]:
 		var path = "res://assets/textures/%s.png" % TEXTURE_FILES.get(name, name)
 		if ResourceLoader.exists(path):
 			textures[name] = load(path)
@@ -155,7 +156,7 @@ func _draw_world():
 	draw_rect(Rect2(Vector2(open.position) * TILE, Vector2(open.size) * TILE), Color("159486"), false, 2)
 	var e = sim.at(selected)
 	if not e.is_empty():
-		var size = 2 if e.kind in ["source", "research", "logistics"] else 1
+		var size = 2 if e.kind in ["source", "research", "logistics", "stellar"] else 1
 		draw_rect(Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size).grow(2), Color("13998e"), false, 2.5)
 		for facing in problem_ports:
 			var pos = (Vector2(e.pos) + Vector2.ONE * 0.5) * TILE + Vector2(FactorySim.DIRS[facing]) * 17
@@ -164,12 +165,12 @@ func _draw_world():
 	_draw_build_overlay(area)
 	if problem_cell != Vector2i(-1000000000, -1000000000):
 		var culprit = sim.entities.get(sim.occupancy.get(FactorySim.key(problem_cell), ""), {})
-		var size = 2 if not culprit.is_empty() and culprit.kind in ["source", "research", "logistics"] else 1
+		var size = 2 if not culprit.is_empty() and culprit.kind in ["source", "research", "logistics", "stellar"] else 1
 		draw_rect(Rect2(Vector2(problem_cell) * TILE, Vector2.ONE * TILE * size).grow(3), Color("c79925"), false, 2)
 	if area.has_point(hover) and tool != "select":
-		var size = 2 if tool == "logistics" else 1
-		var valid = sim.can_place_logistics(hover) if tool == "logistics" else sim.can_place(hover)
-		if tool == "erase": valid = not sim.at(hover).is_empty() and sim.at(hover).kind in ["belt", "multiplier", "splitter", "logistics"]
+		var size = 2 if WorldSim.is_station(tool) else 1
+		var valid = sim.can_place_stellar(hover) if tool == "stellar" else sim.can_place_logistics(hover) if tool == "logistics" else sim.can_place(hover)
+		if tool == "erase": valid = not sim.at(hover).is_empty() and sim.at(hover).kind in ["belt", "multiplier", "splitter", "logistics", "stellar"]
 		elif tool == "belt": valid = valid or (sim.accessible(hover) and not sim.at(hover).is_empty())
 		var color = Color("1aaf9f") if valid else Color("728078")
 		var r = Rect2(Vector2(hover) * TILE, Vector2.ONE * TILE * size)
@@ -186,7 +187,7 @@ func _draw_build_overlay(area: Rect2i):
 		var e = sim.entities.get(id, {})
 		if e.is_empty() or outlined.has(FactorySim.key(e.pos)): continue
 		outlined[FactorySim.key(e.pos)] = true
-		var size = 2 if e.kind == "logistics" else 1
+		var size = 2 if WorldSim.is_station(e.kind) else 1
 		draw_rect(Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size).grow(1), Color("159486"), false, 1.5)
 	if selection_area.has_area():
 		var box = Rect2(Vector2(selection_area.position) * TILE, Vector2(selection_area.size) * TILE)
@@ -195,7 +196,7 @@ func _draw_build_overlay(area: Rect2i):
 	var color = Color("159486") if blueprint_valid else Color("e76863")
 	for node in blueprint_nodes:
 		if not area.grow(2).has_point(node.pos): continue
-		var size = 2 if node.kind == "logistics" else 1
+		var size = 2 if WorldSim.is_station(node.kind) else 1
 		var rect = Rect2(Vector2(node.pos) * TILE, Vector2.ONE * TILE * size)
 		draw_rect(rect, Color(color, 0.1))
 		_draw_body(node, Color(1, 1, 1, 0.45))
@@ -204,11 +205,11 @@ func _draw_build_overlay(area: Rect2i):
 			_arrow(rect.get_center(), node.dir, color)
 		elif node.kind == "multiplier":
 			_center_text(rect.get_center(), "×", 16, color)
-		elif node.kind == "logistics":
-			_center_text(rect.get_center(), "仓", 24, color)
+		elif WorldSim.is_station(node.kind):
+			_center_text(rect.get_center(), "星" if node.kind == "stellar" else "仓", 24, color)
 
 func _draw_body(e: Dictionary, tint: Color = Color.WHITE):
-	var big = e.kind in ["source", "research", "exploration", "hub", "logistics"]
+	var big = e.kind in ["source", "research", "exploration", "hub", "logistics", "stellar"]
 	var size = 2 if big else 1
 	var r = Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size)
 	var center = r.get_center()
@@ -234,7 +235,7 @@ func _draw_body(e: Dictionary, tint: Color = Color.WHITE):
 		draw_rect(r.grow(-3), Color("82938e") * tint, false, 2)
 
 func _draw_entity(e: Dictionary):
-	var big = e.kind in ["source", "research", "exploration", "hub", "logistics"]
+	var big = e.kind in ["source", "research", "exploration", "hub", "logistics", "stellar"]
 	var size = 2 if big else 1
 	var r = Rect2(Vector2(e.pos) * TILE, Vector2.ONE * TILE * size)
 	var center = r.get_center()
@@ -254,9 +255,9 @@ func _draw_entity(e: Dictionary):
 	elif e.kind == "research" and sim is WorldSim:
 		draw_circle(center, 20, Color("f9fbfa"))
 		_center_text(center, "研", 24, Color("159486"))
-	elif e.kind == "logistics" and sim is WorldSim:
+	elif WorldSim.is_station(e.kind) and sim is WorldSim:
 		draw_circle(center, 19, Color("f9fbfa"))
-		_center_text(center, "仓", 24, Color("b79725"))
+		_center_text(center, "星" if e.kind == "stellar" else "仓", 24, Color("d4635c") if e.kind == "stellar" else Color("b79725"))
 		for port in sim.logistics_ports(e):
 			var position = Vector2(port.from) * TILE + Vector2.ONE * TILE / 2 + Vector2(FactorySim.DIRS[port.facing]) * 17
 			if port.mode == "none": draw_circle(position, 2, Color("82938e"))

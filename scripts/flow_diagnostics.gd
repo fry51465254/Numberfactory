@@ -46,7 +46,7 @@ func incoming(e: Dictionary, input_slot: int = -1) -> Array:
 				"source":
 					for port in sim.source_connections(neighbor):
 						if port.pos == e.pos: connected = true
-				"logistics":
+				"logistics", "stellar":
 					if sim is WorldSim:
 						for port in sim.logistics_ports(neighbor):
 							if port.pos == e.pos and port.mode == "output": connected = true
@@ -77,12 +77,12 @@ func upstream(e: Dictionary) -> Dictionary:
 				var slot = 0 if current.inputs[0] == 0 else 1
 				return result("等待上游乘法机输入 %s %s" % ["A" if slot == 0 else "B", coordinate(current.pos)], incoming(current, slot).is_empty(), current.pos)
 			return result("等待上游乘法机加工 " + coordinate(current.pos))
-		if current.kind == "logistics" and sim is WorldSim:
+		if WorldSim.is_station(current.kind) and sim is WorldSim:
 			for port in sim.logistics_ports(current):
 				if port.mode != "output" or port.pos != node.via: continue
 				var value = current.outputs[port.index]
 				if value == 0: return result("物流站 %s %s%d 输出未设置" % [coordinate(current.pos), DIRECTIONS[port.facing], port.index % 2 + 1], true, current.pos)
-				if sim.world.count(sim.world.logistics_stock, value) == 0: return result("物流库存缺少数字 %d %s" % [value, coordinate(current.pos)], true, current.pos)
+				if sim.world.count(sim.station_stock(current), value) == 0: return result("物流库存缺少数字 %d %s" % [value, coordinate(current.pos)], true, current.pos)
 			return result("等待物流站输出 " + coordinate(current.pos))
 		var producers = incoming(current)
 		if producers.is_empty(): last = current.pos
@@ -92,7 +92,7 @@ func upstream(e: Dictionary) -> Dictionary:
 func logistics_output(e: Dictionary, port: Dictionary) -> Dictionary:
 	var value = int(e.outputs[port.index])
 	if value == 0: return result("输出数字未设置", true, e.pos)
-	if sim.world.count(sim.world.logistics_stock, value) == 0: return result("物流库存缺少数字 %d" % value, true, e.pos)
+	if sim.world.count(sim.station_stock(e), value) == 0: return result("物流库存缺少数字 %d" % value, true, e.pos)
 	return downstream({"pos": port.from, "kind": "belt", "dir": port.facing, "layer": 0}, value)
 
 func downstream(e: Dictionary, value: int, direction: int = -1) -> Dictionary:
@@ -144,7 +144,7 @@ func _walk(e: Dictionary, value: int, direction: int, visited: Dictionary) -> Di
 				state = result("等待下游传送周期 " + coordinate(target.pos))
 			else:
 				state = _walk(target, target.item, -1, visited)
-		elif target.kind == "logistics" and sim is WorldSim:
+		elif WorldSim.is_station(target.kind) and sim is WorldSim:
 			state = result("物流输入未连接 " + coordinate(target.pos), true, target.pos)
 			for port in sim.logistics_ports(target):
 				if port.mode == "input" and port.pos == e.pos:

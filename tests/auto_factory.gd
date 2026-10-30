@@ -3,6 +3,7 @@ extends RefCounted
 
 var sim: WorldSim
 var reserved: Dictionary = {}
+var galaxy: GalaxySim
 
 class CrossingGrid extends AStarGrid2D:
 	var crossings: Dictionary = {}
@@ -12,8 +13,9 @@ class CrossingGrid extends AStarGrid2D:
 		if crossings.has(to) and crossings[to] != axis: return INF
 		return 4.0 if crossings.has(to) else 1.0
 
-func _init(model: WorldSim):
+func _init(model: WorldSim, universe: GalaxySim = null):
 	sim = model
+	galaxy = universe
 
 func build(value: int, factor_order: Array = []) -> bool:
 	# Test-only planner builds ordinary machines and belts; it never injects materials.
@@ -26,6 +28,7 @@ func build(value: int, factor_order: Array = []) -> bool:
 	for id in sim.entities.keys():
 		var e = sim.entities.get(id, {})
 		if not e.is_empty() and e.kind in ["belt", "multiplier", "splitter", "logistics"]: sim.remove(e.pos)
+		if not e.is_empty() and e.kind == "stellar": e.outputs.fill(0)
 	sim.ensure_area(sim.world.bounds())
 	reserved.clear()
 	var machines: Array = []
@@ -50,7 +53,10 @@ func build(value: int, factor_order: Array = []) -> bool:
 		var sources: Array = []
 		for e in sim.entities.values():
 			if e.kind == "source" and e.value == input.value: sources.append(e)
-		sources.sort_custom(func(a, b): return a.pos.distance_squared_to(input.pos) < b.pos.distance_squared_to(input.pos))
+			elif galaxy != null and e.kind == "stellar": sources.append(e)
+		sources.sort_custom(func(a, b):
+			if a.kind != b.kind: return a.kind == "source"
+			return a.pos.distance_squared_to(input.pos) < b.pos.distance_squared_to(input.pos))
 		var connected = false
 		for source in sources:
 			var outlets = sim.source_sockets(source)
@@ -59,6 +65,7 @@ func build(value: int, factor_order: Array = []) -> bool:
 				var id = FactorySim.key(outlet.pos)
 				if used.has(id): continue
 				if connect_path(outlet.pos, input.pos, input.direction, outlet.facing):
+					if source.kind == "stellar": source.outputs[outlet.index] = input.value
 					used[id] = true
 					connected = true
 					break
@@ -87,7 +94,7 @@ func connect_path(start: Vector2i, end: Vector2i, end_direction: int, start_dire
 	# A route passing another mine's outlet would legitimately receive that prime too.
 	# Reserve unused outlets so this test planner does not contaminate its ingredients.
 	for e in sim.entities.values():
-		if e.kind == "source":
+		if e.kind == "source" or (galaxy != null and e.kind == "stellar"):
 			for port in sim.source_sockets(e):
 				var outlet = port.pos
 				if grid.is_in_boundsv(outlet): grid.set_point_solid(outlet)
@@ -123,7 +130,8 @@ func produce(cost: Dictionary, max_steps: int = 18000) -> bool:
 			if sim.world.count(sim.world.research_stock, int(value)) >= int(cost[value]):
 				produced = true
 				break
-			sim.tick()
+			if galaxy == null: sim.tick()
+			else: galaxy.tick()
 			if i % 3000 == 2999: print("Producing ", value, " step ", i + 1, ", stock ", sim.world.research_stock)
 		if not produced:
 			for e in sim.entities.values():

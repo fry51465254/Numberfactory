@@ -608,9 +608,9 @@ func restore(data: Dictionary) -> bool:
 			return false
 		var p = Vector2i(int(raw.pos[0]), int(raw.pos[1]))
 		var kind = str(raw.get("kind", ""))
-		if kind not in ["source", "research", "exploration", "hub", "belt", "multiplier", "splitter", "logistics"]:
+		if kind not in ["source", "research", "exploration", "hub", "belt", "multiplier", "splitter", "logistics", "stellar"]:
 			return false
-		var size = 2 if kind in ["source", "research", "exploration", "hub", "logistics"] else 1
+		var size = 2 if kind in ["source", "research", "exploration", "hub", "logistics", "stellar"] else 1
 		if not restore_bounds(p, size):
 			return false
 		var e = _base(kind, p, posmod(int(raw.get("dir", 0)), 4))

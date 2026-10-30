@@ -8,10 +8,14 @@ const LEGACY_DENSITY = 0.7
 var seed_value: int
 var sparse_from_ring: int
 var _fallbacks: Dictionary = {}
+var tier: int = 0
+var prime_limit: int = 13
 
-func _init(world_seed: int = 51465254, first_sparse_ring: int = 0):
+func _init(world_seed: int = 51465254, first_sparse_ring: int = 0, planet_tier: int = 0, limit: int = 13):
 	seed_value = world_seed
 	sparse_from_ring = first_sparse_ring
+	tier = planet_tier
+	prime_limit = mini(limit, PlanetRules.PRIME_CAP)
 
 static func chunk_of(p: Vector2i) -> Vector2i:
 	return Vector2i(floori(float(p.x) / CHUNK), floori(float(p.y) / CHUNK))
@@ -35,9 +39,11 @@ static func ring_chunks(ring: int) -> Array:
 	return chunks
 
 func random_density(chunk: Vector2i) -> float:
+	if tier > 0: return PlanetRules.DENSITIES[tier]
 	return LEGACY_DENSITY if chunk_ring(chunk) < sparse_from_ring else RANDOM_DENSITY
 
 func deposits(chunk: Vector2i) -> Array:
+	if tier > 0: return _alien_deposits(chunk)
 	var base = _base_deposits(chunk)
 	var ring = chunk_ring(chunk)
 	if ring == 0 or ring < sparse_from_ring: return base
@@ -71,7 +77,7 @@ func _stage_deposit(chunk: Vector2i) -> Dictionary:
 	var prime = 3
 	var index = 0
 	var ring = chunk_ring(chunk)
-	while WorldProgress.prime_ring(index) <= ring:
+	while WorldProgress.prime_ring(index) <= ring and WorldProgress.next_prime(prime) <= prime_limit:
 		prime = WorldProgress.next_prime(prime)
 		var guaranteed = Vector2i(18 + (WorldProgress.prime_ring(index) - 1) * 8, 2)
 		if chunk_of(guaranteed) == chunk: return {"pos": guaranteed, "value": prime}
@@ -90,7 +96,7 @@ func _base_deposits(chunk: Vector2i) -> Array:
 	var available: Array = [2, 3]
 	var prime = 3
 	var index = 0
-	while WorldProgress.prime_ring(index) <= ring_of(p):
+	while WorldProgress.prime_ring(index) <= ring_of(p) and WorldProgress.next_prime(prime) <= prime_limit:
 		prime = WorldProgress.next_prime(prime)
 		available.append(prime)
 		index += 1
@@ -100,3 +106,25 @@ func _base_deposits(chunk: Vector2i) -> Array:
 	# Its value exists before unlock, so exploring early cannot change the world.
 	var stage = _stage_deposit(chunk)
 	return [stage] if not stage.is_empty() else result
+
+func _alien_deposits(chunk: Vector2i) -> Array:
+	var first = PlanetRules.STARTS[tier]
+	var starter = Vector2i(-8, -4)
+	if chunk_of(starter) == chunk: return [{"pos": starter, "value": first}]
+	# The landing square contains one new prime; all other deposits are sparse.
+	if chunk in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]: return []
+	var ring = chunk_ring(chunk)
+	var index = 0
+	var latest = first
+	while WorldProgress.prime_ring(index) <= ring and WorldProgress.next_prime(latest) <= prime_limit:
+		latest = WorldProgress.next_prime(latest)
+		var guarantee = Vector2i(18 + (WorldProgress.prime_ring(index) - 1) * 8, 2)
+		if chunk_of(guarantee) == chunk: return [{"pos": guarantee, "value": latest}]
+		index += 1
+	var rng = RandomNumberGenerator.new()
+	rng.seed = seed_value + chunk.x * 73856093 + chunk.y * 19349663
+	var p = chunk * CHUNK + Vector2i(rng.randi_range(1, 5), rng.randi_range(1, 5))
+	if rng.randf() >= random_density(chunk): return []
+	var level = 2 if ring >= 5 else 1 if ring >= 2 else 0
+	var available = PlanetRules.resource_values(tier, latest, level)
+	return [{"pos": p, "value": available[rng.randi_range(0, available.size() - 1)]}]

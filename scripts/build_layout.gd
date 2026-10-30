@@ -1,7 +1,7 @@
 class_name BuildLayout
 extends RefCounted
 
-const FIELDS = {"belt": ["dir", "entry", "layer"], "multiplier": ["dir"], "splitter": ["dir", "mode", "ratio", "filters"], "logistics": ["dir", "outputs"]}
+const FIELDS = {"belt": ["dir", "entry", "layer"], "multiplier": ["dir"], "splitter": ["dir", "mode", "ratio", "filters"], "logistics": ["dir", "outputs"], "stellar": ["dir", "outputs"]}
 const COPY_LIMIT = 4096
 
 static func config(e: Dictionary) -> Dictionary:
@@ -22,7 +22,7 @@ static func matches(actual: Dictionary, expected: Dictionary) -> bool:
 	return false
 
 static func extent(e: Dictionary) -> int:
-	return 2 if e.kind == "logistics" else 1
+	return 2 if WorldSim.is_station(e.kind) else 1
 
 static func bounds(nodes: Array) -> Rect2i:
 	var result = Rect2i()
@@ -59,7 +59,7 @@ static func rotate(nodes: Array) -> Array:
 		if node.kind == "splitter":
 			var filters = node.filters.duplicate()
 			for i in range(4): node.filters[(i + 1) % 4] = filters[i]
-		if node.kind == "logistics":
+		if WorldSim.is_station(node.kind):
 			var outputs = node.outputs.duplicate()
 			for i in range(8):
 				var p = WorldSim.LOG_PORTS[i]
@@ -109,8 +109,10 @@ static func validate(sim: FactorySim, before: Dictionary, after: Dictionary, pas
 		if occupied[p] in before and not before[occupied[p]].is_empty():
 			occupied.erase(p)
 	var stations = sim.logistics_used() if sim is WorldSim else 0
+	var towers = sim.network.used if sim is WorldSim and sim.network != null else 0
 	for node in before.values():
 		if not node.is_empty() and node.kind == "logistics": stations -= 1
+		if not node.is_empty() and node.kind == "stellar": towers -= 1
 	for id in after:
 		var node = after[id]
 		if node.is_empty(): continue
@@ -118,6 +120,9 @@ static func validate(sim: FactorySim, before: Dictionary, after: Dictionary, pas
 		if node.kind == "logistics":
 			if not sim is WorldSim or "logistics" not in sim.world.technologies: return "共享物流尚未研究"
 			stations += 1
+		if node.kind == "stellar":
+			if not sim is WorldSim or sim.network == null or not sim.network.unlocked: return "星际物流尚未研究"
+			towers += 1
 		if node.get("layer", 0) == 1: continue
 		for y in range(extent(node)):
 			for x in range(extent(node)):
@@ -125,6 +130,7 @@ static func validate(sim: FactorySim, before: Dictionary, after: Dictionary, pas
 				if occupied.has(p): return "位置已被占用"
 				occupied[p] = id
 	if sim is WorldSim and stations > sim.world.logistics_capacity: return "物流站建造额度不足"
+	if sim is WorldSim and sim.network != null and towers > sim.network.capacity: return "星际塔全局额度不足"
 	var checked: Dictionary = {}
 	for id in before.keys() + after.keys():
 		var node = after.get(id, before.get(id, {}))

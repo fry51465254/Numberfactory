@@ -1,9 +1,12 @@
 extends Node2D
 
-const TITLES = {"source": "质数矿点", "belt": "传送带", "multiplier": "乘法机", "splitter": "分流器", "research": "研究站", "exploration": "探索站", "hub": "中央枢纽", "logistics": "物流站"}
+const TITLES = {"source": "数字矿点", "belt": "传送带", "multiplier": "乘法机", "splitter": "分流器", "research": "研究站", "exploration": "探索站", "hub": "中央枢纽", "logistics": "物流站", "stellar": "星际物流塔"}
 const NONE_CELL = Vector2i(-1000000000, -1000000000)
 const MIN_ZOOM = 0.02
 var sim = WorldSim.new()
+var galaxy = GalaxySim.new()
+var planet_selector: OptionButton
+var planet_views: Dictionary = {}
 var board: BoardView
 var camera: Camera2D
 var ui: CanvasLayer
@@ -81,11 +84,14 @@ var rotation_buttons: Array = []
 func _ready():
 	RenderingServer.set_default_clear_color(Color("edf0ef"))
 	var args = OS.get_cmdline_user_args()
+	sim = galaxy.current()
 	if "--fresh" not in args and "--qa" not in args:
-		if FileAccess.file_exists(SaveStore.PATH) and not SaveStore.load_game(sim):
+		var path = SaveStore.PATH if FileAccess.file_exists(SaveStore.PATH) else SaveStore.LEGACY_PATH
+		if FileAccess.file_exists(path) and not SaveStore.load_game(galaxy, path):
 			save_blocked = true
 			push_warning("存档无法读取；保留原文件，新建世界后可重新保存。")
-	paused = sim.session_paused
+		sim = galaxy.current()
+	paused = galaxy.paused
 	board = BoardView.new()
 	board.sim = sim
 	add_child(board)
@@ -105,7 +111,8 @@ func _process(delta):
 	if not paused:
 		accumulator += minf(delta, 0.25)
 		while accumulator >= FactorySim.STEP:
-			sim.tick()
+			if galaxy.current() == sim: galaxy.tick()
+			else: sim.tick()
 			accumulator -= FactorySim.STEP
 	autosave += delta
 	refresh_timer += delta
@@ -189,6 +196,11 @@ func _build_ui():
 	var edition = _label("无限实验室", 12, Color("72877b"))
 	edition.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	top_row.add_child(edition)
+	planet_selector = OptionButton.new()
+	planet_selector.custom_minimum_size = Vector2(200, 36)
+	for tier in range(3): planet_selector.add_item("%s · %s" % [PlanetRules.NAMES[tier], PlanetRules.DIFFICULTIES[tier]])
+	planet_selector.item_selected.connect(_travel)
+	top_row.add_child(planet_selector)
 	var spacer = Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(spacer)
@@ -246,7 +258,7 @@ func _build_ui():
 		var label = _label("", 13)
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		goals.add_child(label)
-		var button = _button({"ratio": "比例分流", "filter": "数字筛选", "logistics": "共享物流"}[id], "研究科技", func(): _research_action(id))
+		var button = _button({"ratio": "比例分流", "filter": "数字筛选", "logistics": "共享物流", "interstellar": "星际物流", "ore1": "一次合成矿采集", "ore2": "二次合成矿采集"}[id], "研究科技", func(): _research_action(id))
 		button.icon = _icon("check")
 		goals.add_child(button)
 		tech_controls[id] = {"label": label, "button": button}
@@ -366,7 +378,7 @@ func _build_ui():
 		field.tooltip_text = "输出数字；0 表示关闭该出口"
 		field.value_changed.connect(func(value):
 			var e = sim.at(selected)
-			if not loading_ui and not e.is_empty() and e.kind == "logistics": _edit_setting("outputs", int(value) if value >= 2 else 0, index))
+			if not loading_ui and not e.is_empty() and WorldSim.is_station(e.kind): _edit_setting("outputs", int(value) if value >= 2 else 0, index))
 		logistics_box.add_child(field)
 		logistics_fields.append({"label": label, "field": field})
 	var rotate = _button("旋转", "顺时针旋转 · R", _rotate)
@@ -383,7 +395,7 @@ func _build_ui():
 	bottom_row.position = Vector2(18, 13)
 	bottom_row.add_theme_constant_override("separation", 8)
 	bottom.add_child(bottom_row)
-	for item in [["select", "选择", "pointer"], ["belt", "传送带", "belt"], ["multiplier", "乘法机", "multiply"], ["splitter", "分流器", "split"], ["erase", "拆除", "trash"], ["logistics", "物流站", "locate"]]:
+	for item in [["select", "选择", "pointer"], ["belt", "传送带", "belt"], ["multiplier", "乘法机", "multiply"], ["splitter", "分流器", "split"], ["erase", "拆除", "trash"], ["logistics", "物流站", "locate"], ["stellar", "星际塔", "orbit"]]:
 		var id = item[0]
 		var button = _button(item[1], item[1], func(): _set_tool(id))
 		if id == "belt": button.tooltip_text = "传送带 · 拖动铺设；Shift 反向铺带"
@@ -444,7 +456,10 @@ func _new_world() -> bool:
 		return false
 	# Clamp before integer conversion, including text beyond the 64-bit range.
 	var seed = int(clampf(float(text), WorldProgress.MIN_SEED, WorldProgress.MAX_SEED))
-	sim.reset(seed)
+	galaxy.reset(seed)
+	sim = galaxy.current()
+	board.sim = sim
+	planet_views.clear()
 	history.attach(sim)
 	history.clear()
 	group_selection.clear()
@@ -575,8 +590,8 @@ func _unhandled_input(event):
 			_save(true)
 		elif event.keycode == KEY_DELETE:
 			_delete_selection()
-		elif event.keycode >= KEY_1 and event.keycode <= KEY_6:
-			_set_tool(["select", "belt", "multiplier", "splitter", "erase", "logistics"][event.keycode - KEY_1])
+		elif event.keycode >= KEY_1 and event.keycode <= KEY_7:
+			_set_tool(["select", "belt", "multiplier", "splitter", "erase", "logistics", "stellar"][event.keycode - KEY_1])
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 			painting = false
@@ -643,7 +658,7 @@ func _pick_cell(screen: Vector2) -> Vector2i:
 		for x in range(-1, 2):
 			var candidate = sim.at(cell + Vector2i(x, y))
 			if candidate.is_empty() or candidate.kind == "belt": continue
-			var size = 2 if candidate.kind in ["source", "research", "logistics"] else 1
+			var size = 2 if candidate.kind in ["source", "research", "logistics", "stellar"] else 1
 			var rect = Rect2(Vector2(candidate.pos) * 40, Vector2.ONE * 40 * size)
 			var nearest = point.clamp(rect.position, rect.end)
 			var gap = point.distance_to(nearest)
@@ -657,7 +672,7 @@ func _focus_cell(cell: Vector2i):
 	view_zoom = maxf(view_zoom, 0.8)
 	camera.zoom = Vector2.ONE * view_zoom
 	var e = sim.at(cell)
-	var size = 2 if not e.is_empty() and e.kind in ["source", "research", "logistics"] else 1
+	var size = 2 if not e.is_empty() and e.kind in ["source", "research", "logistics", "stellar"] else 1
 	camera.position = (Vector2(e.pos if not e.is_empty() else cell) + Vector2.ONE * size / 2.0) * 40
 	_layout()
 	camera.force_update_scroll()
@@ -794,7 +809,7 @@ func _drag_to(cell: Vector2i):
 				last_paint = next
 				if stroke_undo.is_empty(): stroke_cells = [next]
 				continue
-			if previous.kind in ["multiplier", "splitter", "logistics"]:
+			if previous.kind in ["multiplier", "splitter", "logistics", "stellar"]:
 				reverse_belt_drag = stroke_reverse_requested or (not target.is_empty() and target.kind == "belt" and target.dir == FactorySim.DIRS.find(-step))
 			elif previous.kind in FactorySim.TARGETS:
 				reverse_belt_drag = true
@@ -854,7 +869,7 @@ func _accepts_belt(from: Vector2i, destination: Vector2i) -> bool:
 		return facing >= 0 and (facing in slots or -1 in slots)
 	if e.kind == "splitter":
 		return FactorySim.DIRS.has(from - e.pos)
-	return e.kind in FactorySim.TARGETS or e.kind == "logistics"
+	return e.kind in FactorySim.TARGETS or WorldSim.is_station(e.kind)
 
 func _device_outputs_to(from: Vector2i, destination: Vector2i) -> bool:
 	var e = sim.at(from)
@@ -866,7 +881,7 @@ func _device_outputs_to(from: Vector2i, destination: Vector2i) -> bool:
 	if e.kind == "source":
 		for port in sim.source_sockets(e):
 			if destination == port.pos: return true
-	if e.kind == "logistics":
+	if WorldSim.is_station(e.kind):
 		for port in sim.logistics_ports(e):
 			if destination == port.pos: return true
 	return false
@@ -877,7 +892,7 @@ func _snap_belt_to_input(cell: Vector2i):
 	var candidates: Array = []
 	for facing in range(4):
 		var neighbor = sim.at(cell + FactorySim.DIRS[facing])
-		if not neighbor.is_empty() and neighbor.kind == "logistics": continue
+		if not neighbor.is_empty() and WorldSim.is_station(neighbor.kind): continue
 		if facing != e.entry and _accepts_belt(cell, cell + FactorySim.DIRS[facing]):
 			candidates.append(facing)
 	if candidates.size() == 1:
@@ -912,7 +927,7 @@ func _paint(cell: Vector2i, entry: int = -1, crossing: bool = false) -> bool:
 			selected = cell
 			_refresh_selection()
 		else:
-			_toast("土地尚未开放" if not sim.accessible(cell) else "物流站额度不足或占地被占用" if tool == "logistics" else "此格已被占用，无法放置")
+			_toast("土地尚未开放" if not sim.accessible(cell) else "物流建筑额度不足或占地被占用" if WorldSim.is_station(tool) else "此格已被占用，无法放置")
 			if own_action: history.commit()
 			return false
 	if own_action:
@@ -921,6 +936,9 @@ func _paint(cell: Vector2i, entry: int = -1, crossing: bool = false) -> bool:
 	return true
 
 func _set_tool(value: String):
+	if value == "stellar" and not galaxy.network.unlocked:
+		_toast("需要先在起源星研究星际物流")
+		return
 	if value == "logistics" and "logistics" not in sim.world.technologies:
 		_toast("质数 7 开放后可研究共享物流")
 		return
@@ -1016,7 +1034,7 @@ func _preview_paste(cell: Vector2i):
 	if not pasting or cell == NONE_CELL:
 		board.blueprint_nodes = []
 		return
-	var stamp = "%s:%d:%d:%d:%d:%d" % [FactorySim.key(cell), clipboard_revision, history.revision, sim.world.expansions, sim.world.logistics_capacity, sim.world.technologies.size()]
+	var stamp = "%s:%d:%d:%d:%d:%d:%d" % [FactorySim.key(cell), clipboard_revision, history.revision, sim.world.expansions, sim.world.logistics_capacity, sim.world.technologies.size(), galaxy.network.capacity]
 	if stamp == paste_stamp: return
 	paste_stamp = stamp
 	paste_plan = BuildLayout.plan(sim, clipboard_nodes, cell)
@@ -1108,7 +1126,7 @@ func _refresh_selection():
 			var value = e.filters[facing]
 			filter_ports[facing].selector.select(0 if value == 0 else 2 if value == -1 else 1)
 			filter_ports[facing].number.value = maxi(2, value)
-	if not e.is_empty() and e.kind == "logistics":
+	if not e.is_empty() and WorldSim.is_station(e.kind):
 		for i in range(8): logistics_fields[i].field.value = e.outputs[i]
 	loading_ui = false
 	_refresh()
@@ -1121,28 +1139,40 @@ func _refresh():
 	board.group_selection = group_selection
 	_refresh_edit_buttons()
 	var w = sim.world
+	galaxy.sync_progress()
+	planet_selector.select(galaxy.active_planet)
+	for tier in range(3):
+		var reason = galaxy.travel_reason(tier)
+		planet_selector.set_item_text(tier, "%s · %s%s" % [PlanetRules.NAMES[tier], PlanetRules.DIFFICULTIES[tier], " · 未开放" if not reason.is_empty() else ""])
+		planet_selector.get_popup().set_item_tooltip(tier, reason if not reason.is_empty() else "质数上限 %d · 矿点概率 %.1f%%" % [PlanetRules.CAPS[tier], PlanetRules.DENSITIES[tier] * 100])
 	expansion_label.text = "%d × %d → %d × %d\n第 %d 圈\n%s" % [w.half_size() * 2, w.half_size() * 2, w.half_size() * 2 + 16, w.half_size() * 2 + 16, w.expansions + 1, _cost_text(w.expansion_cost)]
 	var resource_lines = PackedStringArray()
 	var next_resources = sim.next_ring_resources()
 	var resources = next_resources.keys()
 	resources.sort()
-	for prime in resources: resource_lines.append("%d × %d%s" % [prime, next_resources[prime], "（未研究）" if prime not in w.primes else ""])
+	for prime in resources: resource_lines.append("%d × %d%s" % [prime, next_resources[prime], "（未研究）" if not sim.source_enabled({"value": prime}) else ""])
 	expansion_label.text += "\n下一圈矿点\n" + "、".join(resource_lines)
 	if "logistics" in w.technologies: expansion_label.text += "\n物流额度 +1"
 	_action_style(expansion_button, w.can_pay(w.expansion_cost), _cost_text(w.expansion_cost))
-	prime_label.text = "质数 %d\n扩张 %d / %d\n%s" % [w.next_resource(), w.expansions - w.last_prime_expansion, WorldProgress.interval(w.stage), _cost_text(w.prime_cost)]
+	prime_label.text = "质数 %d\n扩张 %d / %d\n%s" % [w.next_resource(), w.expansions - w.last_prime_expansion, WorldProgress.interval(w.local_stage()), _cost_text(w.prime_cost)]
 	if "logistics" in w.technologies: prime_label.text += "\n物流额度 +1"
-	prime_button.text = "研究质数 %d" % w.next_resource()
-	var prime_limit = w.next_resource() * 2 > FactorySim.MAX_VALUE
-	if prime_limit: prime_label.text += "\n已达到当前整数范围的质数上限"
+	if w.next_resource() == 0: prime_label.text = "本星球质数研究已完成\n本地上限 %d · 全局上限 %d" % [PlanetRules.CAPS[w.tier], PlanetRules.PRIME_CAP]
+	prime_button.text = "质数研究完成" if w.next_resource() == 0 else "研究质数 %d" % w.next_resource()
+	var prime_limit = w.next_resource() == 0
+	prime_button.disabled = prime_limit
 	_action_style(prime_button, not prime_limit and w.prime_ready() and w.can_pay(w.prime_cost), prime_label.text)
 	for technology in tech_controls:
 		var control = tech_controls[technology]
+		control.label.visible = technology in w.techs_for_planet()
+		control.button.visible = control.label.visible
+		if not control.label.visible: continue
 		control.label.text = "已研究" if technology in w.technologies else _cost_text(w.tech_costs[technology])
 		if technology not in w.technologies:
 			if technology == "logistics": control.label.text += "\n物流站额度 +2"
 			elif "logistics" in w.technologies: control.label.text += "\n物流额度 +1"
 		if technology == "logistics" and 7 not in w.primes: control.label.text = "需要质数 7 与数字筛选\n" + control.label.text
+		if technology == "interstellar": control.label.text = "需要 8 圈、质数 7 与共享物流\n首批星际塔 +2\n" + control.label.text
+		if technology in ["ore1", "ore2"] and technology not in w.technologies: control.label.text = "需要 %d 圈%s\n" % [2 if technology == "ore1" else 5, "与一次合成矿采集" if technology == "ore2" else ""] + control.label.text
 		control.button.disabled = technology in w.technologies
 		_action_style(control.button, w.tech_available(technology) and w.can_pay(w.tech_costs[technology]), control.label.text)
 	var prime_names = ", ".join(w.primes.map(func(p): return str(p)))
@@ -1150,6 +1180,10 @@ func _refresh():
 	supply_label.text = "已开放质数  %s\n物流站  %d / %d\n种子  %d\n近期交付  %.2f 个/秒" % [prime_summary, sim.logistics_used(), w.logistics_capacity, w.seed_value, sim.rate("research")]
 	supply_label.tooltip_text = "已开放质数  " + prime_names + "\n" + supply_label.text
 	buttons.logistics.disabled = "logistics" not in w.technologies
+	buttons.stellar.disabled = not galaxy.network.unlocked
+	if galaxy.network.unlocked:
+		supply_label.text = "本地物流 %d/%d · 星际塔 %d/%d\n下一对星际塔：还需 %d 次成长\n质数上限 %d · 全局 %d\n近期交付 %.2f 个/秒" % [sim.logistics_used(), w.logistics_capacity, galaxy.network.used, galaxy.network.capacity, PlanetRules.PAIR_INTERVAL - (galaxy.growth_total() - galaxy.growth_origin) % PlanetRules.PAIR_INTERVAL, PlanetRules.CAPS[w.tier], PlanetRules.PRIME_CAP, sim.rate("research")]
+		supply_label.tooltip_text += "\n" + supply_label.text
 	complete_label.text = "存档异常 · 已禁止覆盖" if save_blocked else "已暂停" if paused else ""
 	if toast_time == 0:
 		status_label.text = "第 %d 圈   ·   %d 个已生成区块   ·   %s" % [w.expansions, sim.loaded_chunks.size(), "已暂停" if paused else "运行中"]
@@ -1164,7 +1198,7 @@ func _refresh():
 	problem_button.visible = false
 	splitter_box.visible = not e.is_empty() and e.kind == "splitter"
 	underground_box.visible = not sim.at(selected, 1).is_empty()
-	logistics_box.visible = not e.is_empty() and e.kind == "logistics"
+	logistics_box.visible = not e.is_empty() and WorldSim.is_station(e.kind)
 	mode_input.set_item_disabled(1, not sim.splitter_unlocked(1))
 	mode_input.set_item_disabled(2, not sim.splitter_unlocked(2))
 	ratio_input.editable = sim.splitter_unlocked(1)
@@ -1231,8 +1265,8 @@ func _refresh():
 				inspector_detail.text += "\n\n地下  %s\n物料  %s" % [["东", "南", "西", "北"][under.dir], str(under.item) if under.item else "空"]
 				if under.item: inspector_detail.text += "\n" + _factor_text(under.item)
 				inspector_detail.text += "\n" + diagnostics.describe(under).text
-		"logistics":
-			inspector_detail.text = "合计上限  6 个/秒\n每口上限  3 个/秒\n实际  %.2f 个/秒\n\n物流库存\n%s" % [e.log_recent.size() / maxf(1.0, minf(10.0, sim.elapsed)), _stock_text(w.logistics_stock)]
+		"logistics", "stellar":
+			inspector_detail.text = "%s\n合计上限  6 个/秒\n每口上限  3 个/秒\n实际  %.2f 个/秒\n\n库存\n%s" % ["跨星球共享" if e.kind == "stellar" else "本星球共享", e.log_recent.size() / maxf(1.0, minf(10.0, sim.elapsed)), _stock_text(sim.station_stock(e))]
 			for port in sim.logistics_ports(e):
 				var i = port.index
 				logistics_fields[i].label.text = "%s%d · %s" % [["东", "南", "西", "北"][port.facing], i % 2 + 1, {"input": "输入", "output": "输出", "none": "未连接"}[port.mode]]
@@ -1271,11 +1305,13 @@ func _research_action(action: String):
 	var cost = w.expansion_cost if action == "expand" else w.prime_cost if action == "prime" else w.tech_costs[action]
 	var reasons = PackedStringArray()
 	if action == "prime":
-		if w.next_resource() * 2 > FactorySim.MAX_VALUE: reasons.append("已达到整数范围上限")
-		elif not w.prime_ready(): reasons.append("还需扩张 %d 圈" % (WorldProgress.interval(w.stage) - w.expansions + w.last_prime_expansion))
+		if w.next_resource() == 0: reasons.append("已达到本星球质数上限 %d" % PlanetRules.CAPS[w.tier])
+		elif not w.prime_ready(): reasons.append("还需扩张 %d 圈" % (WorldProgress.interval(w.local_stage()) - w.expansions + w.last_prime_expansion))
 	elif action not in ["expand", "prime"] and not w.tech_available(action):
 		if action in w.technologies: reasons.append("该科技已研究")
 		elif action == "logistics": reasons.append("需要质数 7 与数字筛选")
+		elif action == "interstellar": reasons.append("需要扩张 8 圈、质数 7 与共享物流")
+		elif action in ["ore1", "ore2"]: reasons.append("需要扩张 %d 圈%s" % [2 if action == "ore1" else 5, "并研究一次合成矿采集" if action == "ore2" else ""])
 		else: reasons.append("需要先研究比例分流")
 	for value in cost:
 		var missing = int(cost[value]) - w.count(w.research_stock, int(value))
@@ -1286,6 +1322,7 @@ func _research_action(action: String):
 		research_feedback.popup_centered(Vector2i(360, 180))
 		return
 	var success = w.expand() if action == "expand" else w.research_prime() if action == "prime" else w.research_tech(action)
+	galaxy.sync_progress()
 	_toast(("已开放下一圈土地" if action == "expand" else "新质数已研究" if action == "prime" else "科技已研究") + (" · 物流额度增加" if "logistics" in w.technologies else "") if success else "条件不足，未消耗库存")
 	_refresh()
 
@@ -1323,9 +1360,36 @@ func _save(show_message: bool):
 		return
 	if "--qa" in OS.get_cmdline_user_args(): return
 	sim.session_paused = paused
-	var result = SaveStore.save_game(sim)
+	galaxy.paused = paused
+	var result = SaveStore.save_game(galaxy)
 	if show_message or result != OK:
 		_toast("工厂已保存" if result == OK else "保存失败 · 错误 %d" % result)
+
+func _travel(tier: int):
+	_end_stroke()
+	galaxy.sync_progress()
+	var reason = galaxy.travel_reason(tier)
+	if not reason.is_empty():
+		planet_selector.select(galaxy.active_planet)
+		research_feedback.dialog_text = reason
+		research_feedback.popup_centered(Vector2i(380, 180))
+		return
+	planet_views[galaxy.active_planet] = {"position": camera.position, "zoom": view_zoom}
+	if not galaxy.travel(tier): return
+	sim = galaxy.current()
+	board.sim = sim
+	selected = NONE_CELL
+	group_selection.clear()
+	history.attach(sim)
+	_set_tool("select")
+	var view = planet_views.get(tier, {"position": Vector2(-160, 0), "zoom": 0.9})
+	view_zoom = view.zoom
+	camera.zoom = Vector2.ONE * view_zoom
+	camera.position = view.position
+	accumulator = 0.0
+	_layout()
+	_refresh_selection()
+	_toast("已抵达 %s · %s" % [PlanetRules.NAMES[tier], PlanetRules.DIFFICULTIES[tier]])
 
 func _run_visual_qa():
 	paused = true

@@ -2,6 +2,48 @@
   "style": "Abstract mathematics laboratory, orthographic overhead, white and graphite with teal/coral/yellow accents",
   "assets": [
     {
+      "name": "stellar",
+      "path": "res://assets/textures/stellar-eightway.png",
+      "tool": "built-in image_gen",
+      "transparent": true,
+      "display_pixels": 80,
+      "generated_on": "2026-10-31",
+      "reference_assets": [
+        "res://assets/textures/logistics-eightway.png"
+      ],
+      "prompt": "Use case: stylized-concept. Asset type: one transparent PNG game sprite for a Chinese top-down arithmetic factory, a unique interstellar logistics tower occupying a 2x2 square. Reference image is STYLE REFERENCE ONLY: match white ceramic panels, graphite outlines, crisp restrained geometric laboratory instruments. Create a clearly distinct interstellar instrument: a central concentric ring/portal-like scientific mechanism with an empty pale circular center, a compact octagonal shell, coral-red functional accents and a few teal mechanical details, not a yellow storage crate. Strict orthographic directly overhead 90-degree plan view, no perspective or side faces. Entire single device centered, complete and large in square canvas with narrow even transparent margin. EXACTLY EIGHT identical neutral conveyor sockets: two on each of four cardinal sides, their centerlines exactly at 25% and 75% of the total device width/height. Each socket straight and perpendicular to its edge, dark track with two white rails, no arrows; all eight identical width. Make the outline and ring readable when shrunk to 80x80 pixels. True transparent background, no ground, no cast shadows, no glow outside silhouette, no lettering, no numbers, no symbols, no labels, no watermark. Do not bake status lamps, directions or changing information into the artwork.",
+      "render_alignment": {
+        "method": "UV-anchored grid mesh in board_view.gd; original PNG preserved",
+        "source_pixels": 1254,
+        "source_x": [
+          0,
+          422.5,
+          502.5,
+          751,
+          830.5,
+          1254
+        ],
+        "source_y": [
+          0,
+          426.5,
+          504.5,
+          746,
+          825.5,
+          1254
+        ],
+        "destination_tile_fraction": [
+          0,
+          0.21,
+          0.29,
+          0.71,
+          0.79,
+          1
+        ],
+        "ports": "eight identical neutral sockets, two per edge at quarter and three-quarter positions",
+        "track_width_pixels": 6.4
+      }
+    },
+    {
       "name": "floor",
       "path": "res://assets/textures/floor.png",
       "tool": "built-in image_gen",

@@ -9,24 +9,27 @@ var session_paused: bool = false
 var _preview_key: String = ""
 var _preview_resources: Dictionary = {}
 var logistics_last_served: String = ""
+var stellar_last_served: String = ""
+var network: StarNetwork
+var planet_tier: int = 0
 const LOGISTICS_RATE = 6.0
 const LOG_PORTS = [Vector2i(2, 0), Vector2i(2, 1), Vector2i(0, 2), Vector2i(1, 2), Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, -1), Vector2i(1, -1)]
 
-func _init(world_seed: int = 51465254, first_sparse_ring: int = 0):
+func _init(world_seed: int = 51465254, first_sparse_ring: int = 0, tier: int = 0):
 	super(false)
-	world = WorldProgress.new(world_seed)
-	generator = WorldGenerator.new(world.seed_value, first_sparse_ring)
+	planet_tier = tier
 	reset(world_seed, first_sparse_ring)
 
 func reset(world_seed: int = 51465254, first_sparse_ring: int = 0):
 	sparse_from_ring = first_sparse_ring
-	world = WorldProgress.new(world_seed)
-	generator = WorldGenerator.new(world.seed_value, sparse_from_ring)
+	world = WorldProgress.new(world_seed, planet_tier)
+	generator = WorldGenerator.new(world.seed_value, sparse_from_ring, planet_tier, PlanetRules.CAPS[planet_tier])
 	_preview_key = ""
 	_preview_resources = {}
 	loaded_chunks.clear()
 	session_paused = false
 	logistics_last_served = ""
+	stellar_last_served = ""
 	entities.clear()
 	occupancy.clear()
 	delivered = {"research": 0, "exploration": 0, "hub": 0}
@@ -37,7 +40,7 @@ func reset(world_seed: int = 51465254, first_sparse_ring: int = 0):
 	discarded = 0
 	_add_fixed("research", Vector2i(0, -1))
 	ensure_area(Rect2i(-12, -8, 24, 16))
-	for y in [-4, -3, 4, 5]:
+	for y in ([-4, -3, 4, 5] if planet_tier == 0 else [-4, -3]):
 		place(Vector2i(-6, y), "belt", 0)
 
 func accessible(p: Vector2i) -> bool:
@@ -77,6 +80,18 @@ func logistics_used() -> int:
 		if e.kind == "logistics": count += 1
 	return count
 
+static func is_station(kind: String) -> bool:
+	return kind in ["logistics", "stellar"]
+
+func station_stock(e: Dictionary) -> Dictionary:
+	return network.stock if e.kind == "stellar" and network != null else world.logistics_stock
+
+func can_place_stellar(p: Vector2i) -> bool:
+	if network == null or not network.unlocked or network.used >= network.capacity: return false
+	for offset in [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.ONE]:
+		if not can_place(p + offset): return false
+	return true
+
 func next_ring_resources() -> Dictionary:
 	var stamp = "%d:%d:%d" % [world.seed_value, world.expansions, sparse_from_ring]
 	if stamp == _preview_key: return _preview_resources
@@ -104,14 +119,16 @@ func can_place_logistics(p: Vector2i) -> bool:
 	return true
 
 func place(p: Vector2i, kind: String, direction: int) -> bool:
-	if kind != "logistics": return super(p, kind, direction)
-	if not can_place_logistics(p): return false
-	_add_fixed("logistics", p)
+	if not is_station(kind): return super(p, kind, direction)
+	if not (can_place_stellar(p) if kind == "stellar" else can_place_logistics(p)): return false
+	_add_fixed(kind, p)
+	if kind == "stellar": network.used += 1
 	return true
 
 func remove(p: Vector2i) -> bool:
 	var e = at(p)
-	if e.is_empty() or e.kind != "logistics": return super(p)
+	if e.is_empty() or not is_station(e.kind): return super(p)
+	if e.kind == "stellar" and network != null: network.used -= 1
 	for offset in [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.ONE]: occupancy.erase(key(e.pos + offset))
 	entities.erase(key(e.pos))
 	return true
@@ -143,7 +160,7 @@ func logistics_port_state(e: Dictionary, port: Dictionary) -> String:
 	if port.mode == "output":
 		var value = int(e.outputs[port.index])
 		if value == 0: return "未设置"
-		if world.count(world.logistics_stock, value) == 0: return "缺货"
+		if world.count(station_stock(e), value) == 0: return "缺货"
 		_vacate_cache.clear()
 		if neighbor.is_empty() or (neighbor.item != 0 and not _can_vacate(entities, id, {})): return "下游堵塞"
 	elif neighbor.is_empty() or neighbor.item == 0:
@@ -154,7 +171,7 @@ func logistics_port_state(e: Dictionary, port: Dictionary) -> String:
 
 func tick(dt: float = STEP):
 	for e in entities.values():
-		if e.kind != "logistics": continue
+		if not is_station(e.kind): continue
 		e.budget = minf(1.0, e.budget + dt * LOGISTICS_RATE)
 		for i in range(8): e.port_age[i] = minf(TRAVEL, e.port_age[i] + dt)
 		while not e.log_recent.is_empty() and e.log_recent[0] < elapsed - 10.0: e.log_recent.pop_front()
@@ -167,10 +184,14 @@ func propose_after(snapshot: Dictionary, reserved: Dictionary, moves: Array):
 	if turn % 2 != 0: _propose_logistics(snapshot, reserved, moves)
 
 func _propose_logistics(snapshot: Dictionary, reserved: Dictionary, moves: Array):
-	var ids = snapshot.keys().filter(func(id): return snapshot[id].kind == "logistics")
+	_propose_stations(snapshot, reserved, moves, "logistics", logistics_last_served)
+	if network != null and network.unlocked: _propose_stations(snapshot, reserved, moves, "stellar", stellar_last_served)
+
+func _propose_stations(snapshot: Dictionary, reserved: Dictionary, moves: Array, kind: String, last_served: String):
+	var ids = snapshot.keys().filter(func(id): return snapshot[id].kind == kind)
 	ids.sort()
-	if not ids.is_empty() and logistics_last_served in ids:
-		var offset = (ids.find(logistics_last_served) + 1) % ids.size()
+	if not ids.is_empty() and last_served in ids:
+		var offset = (ids.find(last_served) + 1) % ids.size()
 		ids = ids.slice(offset) + ids.slice(0, offset)
 	for id in ids:
 		var e = snapshot[id]
@@ -182,14 +203,14 @@ func _propose_logistics(snapshot: Dictionary, reserved: Dictionary, moves: Array
 			if port.mode != "output" or value < 2 or e.port_age[i] + 0.000001 < TRAVEL: continue
 			var budget_id = "budget:" + id
 			if e.budget - int(reserved.get(budget_id, 0)) < 0.999999: continue
-			var stock_id = "stock:%d" % value
-			if world.count(world.logistics_stock, value) <= int(reserved.get(stock_id, 0)): continue
+			var stock_id = "%s:stock:%d" % [kind, value]
+			if world.count(station_stock(e), value) <= int(reserved.get(stock_id, 0)): continue
 			if _offer(snapshot, reserved, moves, id, port.from, port.pos, value, i):
 				reserved[stock_id] = int(reserved.get(stock_id, 0)) + 1
 				reserved[budget_id] = int(reserved.get(budget_id, 0)) + 1
 
 func extra_can_receive(e: Dictionary, from: Vector2i) -> bool:
-	if e.kind != "logistics" or e.budget < 0.999999: return false
+	if not is_station(e.kind) or e.budget < 0.999999: return false
 	for port in logistics_ports(e):
 		if port.pos == from and port.mode == "input" and e.port_age[port.index] + 0.000001 >= TRAVEL: return true
 	return false
@@ -198,7 +219,7 @@ func _offer(snapshot: Dictionary, reserved: Dictionary, moves: Array, source: St
 		from: Vector2i, destination: Vector2i, value: int, port: int) -> bool:
 	var id = _target_id(snapshot, from, destination)
 	var e = snapshot.get(id, {})
-	if e.is_empty() or e.kind != "logistics": return super(snapshot, reserved, moves, source, from, destination, value, port)
+	if e.is_empty() or not is_station(e.kind): return super(snapshot, reserved, moves, source, from, destination, value, port)
 	# A station accepts only adjacent incoming belts, never machines or other stations.
 	if snapshot[source].kind != "belt": return false
 	for input_port in logistics_ports(e, snapshot):
@@ -216,11 +237,14 @@ func _offer(snapshot: Dictionary, reserved: Dictionary, moves: Array, source: St
 
 func extra_departure(move: Dictionary) -> bool:
 	var e = entities[move.source]
-	if e.kind != "logistics": return false
+	if not is_station(e.kind): return false
 	var value = str(move.value)
-	world.logistics_stock[value] -= 1
+	station_stock(e)[value] -= 1
 	# Advance only on committed transfers, so periodic supply cannot lock a station out.
-	logistics_last_served = move.source
+	if e.kind == "stellar":
+		stellar_last_served = move.source
+		network.last_planet = planet_tier
+	else: logistics_last_served = move.source
 	e.budget -= 1.0
 	e.port_age[move.port] = 0.0
 	e.cursor = (move.port + 1) % 8
@@ -229,9 +253,9 @@ func extra_departure(move: Dictionary) -> bool:
 
 func extra_arrival(move: Dictionary) -> bool:
 	var e = entities[move.destination]
-	if e.kind != "logistics": return false
+	if not is_station(e.kind): return false
 	var value = str(move.value)
-	world.logistics_stock[value] = world.count(world.logistics_stock, move.value) + 1
+	station_stock(e)[value] = world.count(station_stock(e), move.value) + 1
 	e.budget -= 1.0
 	e.port_age[move.input] = 0.0
 	e.log_recent.append(elapsed)
@@ -244,7 +268,9 @@ func source_rate(e: Dictionary) -> float:
 	return 3.0 if e.value == 2 else 2.0
 
 func source_enabled(e: Dictionary) -> bool:
-	return e.value in world.primes
+	if planet_tier == 0: return e.value in world.primes
+	var parts = factors(e.value)
+	return parts.size() <= world.ore_level() + 1 and parts.all(func(p): return p in world.primes)
 
 func source_shared_rate() -> bool:
 	return true
@@ -287,7 +313,7 @@ func restore_bounds(p: Vector2i, size: int) -> bool:
 	return world.accessible(p) and world.accessible(p + Vector2i.ONE * (size - 1))
 
 func valid_source(value: int) -> bool:
-	return value <= MAX_VALUE and WorldProgress.is_prime(value)
+	return value <= MAX_VALUE and value in PlanetRules.resource_values(planet_tier, generator.prime_limit)
 
 func total_mass() -> int:
 	var mass = discarded
@@ -303,6 +329,8 @@ func serialize() -> Dictionary:
 	data.loaded_chunks = loaded_chunks.keys()
 	data.paused = session_paused
 	data.logistics_last_served = logistics_last_served
+	data.stellar_last_served = stellar_last_served
+	data.generation_limit = generator.prime_limit
 	data.generation_version = WorldGenerator.CURRENT_VERSION
 	data.sparse_from_ring = sparse_from_ring
 	return data
@@ -328,6 +356,7 @@ func restore(data: Dictionary) -> bool:
 		if key(chunk) != str(raw) or chunks.has(str(raw)) or not candidate.bounds().intersects(Rect2i(chunk * 8, Vector2i.ONE * 8)): return false
 		chunks[str(raw)] = true
 	var stations = 0
+	var towers = 0
 	var sources: Dictionary = {}
 	var research_count = 0
 	for raw in data.entities:
@@ -338,13 +367,17 @@ func restore(data: Dictionary) -> bool:
 		var p = Vector2i(int(raw.pos[0]), int(raw.pos[1]))
 		if not chunks.has(key(WorldGenerator.chunk_of(p))): return false
 		if raw.get("kind") == "logistics": stations += 1
+		if raw.get("kind") == "stellar": towers += 1
 		if raw.get("kind") == "source": sources[key(p)] = int(raw.get("value", 0))
 		if raw.get("kind") == "research":
 			research_count += 1
 			if p != Vector2i(0, -1): return false
 		if raw.get("kind") in ["exploration", "hub"]: return false
 	if research_count != 1: return false
-	var candidate_generator = WorldGenerator.new(candidate.seed_value, first_sparse_ring)
+	var limit = data.get("generation_limit", PlanetRules.PRIME_CAP)
+	if not valid_integer(limit) or int(limit) < candidate.primes[-1] or int(limit) > PlanetRules.PRIME_CAP: return false
+	if candidate.tier > 0 and int(limit) != PlanetRules.CAPS[candidate.tier]: return false
+	var candidate_generator = WorldGenerator.new(candidate.seed_value, first_sparse_ring, candidate.tier, int(limit))
 	var expected_sources: Dictionary = {}
 	for id in chunks:
 		var coordinates = id.split(",")
@@ -352,16 +385,25 @@ func restore(data: Dictionary) -> bool:
 			expected_sources[key(deposit.pos)] = deposit.value
 	if sources != expected_sources: return false
 	if stations > candidate.logistics_capacity or (stations > 0 and "logistics" not in candidate.technologies): return false
+	if towers > 0 and (network == null or not network.unlocked or towers > network.capacity): return false
 	var previous = world
+	var previous_generator = generator
+	var previous_tier = planet_tier
 	world = candidate
+	generator = candidate_generator
+	planet_tier = candidate.tier
 	var compatible = data.duplicate(true)
 	compatible.version = 2
 	if not super(compatible):
 		world = previous
+		generator = previous_generator
+		planet_tier = previous_tier
 		return false
 	generator = candidate_generator
+	planet_tier = candidate.tier
 	sparse_from_ring = first_sparse_ring
 	loaded_chunks = chunks
 	session_paused = bool(data.get("paused", false))
 	logistics_last_served = str(data.get("logistics_last_served", ""))
+	stellar_last_served = str(data.get("stellar_last_served", ""))
 	return true

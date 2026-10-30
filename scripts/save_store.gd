@@ -1,9 +1,10 @@
 class_name SaveStore
 extends RefCounted
 
-const PATH = "user://number_factory_world_v3.json"
+const PATH = "user://number_factory_galaxy_v4.json"
+const LEGACY_PATH = "user://number_factory_world_v3.json"
 
-static func save_game(sim: FactorySim, path: String = PATH) -> Error:
+static func save_game(sim, path: String = PATH) -> Error:
 	var file = FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if file == null:
 		return FileAccess.get_open_error()
@@ -12,7 +13,7 @@ static func save_game(sim: FactorySim, path: String = PATH) -> Error:
 	file.close()
 	return DirAccess.rename_absolute(path + ".tmp", path)
 
-static func load_game(sim: FactorySim, path: String = PATH) -> bool:
+static func load_game(sim, path: String = PATH) -> bool:
 	if not FileAccess.file_exists(path):
 		return false
 	var file = FileAccess.open(path, FileAccess.READ)
